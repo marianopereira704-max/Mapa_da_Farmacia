@@ -1,0 +1,20 @@
+.streamlit/secrets.toml
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/onedrive_simulado/
+data/sample/
+
+# Pastas de IDE/editor e arquivos de sistema operacional — não têm nada a
+# ver com o projeto em si, só variam de máquina para máquina.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs locais (ex.: saída redirecionada de `streamlit run` durante testes
+# manuais) — nenhum script do projeto grava isso dentro do repositório
+# hoje, mas é uma rede de segurança caso aconteça no futuro.
+*.log
