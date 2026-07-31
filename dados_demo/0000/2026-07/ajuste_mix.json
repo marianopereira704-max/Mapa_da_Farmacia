@@ -1,0 +1,82 @@
+{
+  "loja": "0000",
+  "consultor": "Consultor Demonstração",
+  "ciclo": "0000/2026-07",
+  "produtos": [
+    {
+      "ean": "0000000000001",
+      "ean_original": "0000000000001",
+      "quantidade": 3
+    },
+    {
+      "ean": "0000000000002",
+      "ean_original": "0000000000002",
+      "quantidade": 3
+    },
+    {
+      "ean": "0000000000003",
+      "ean_original": "0000000000003",
+      "quantidade": 3
+    },
+    {
+      "ean": "0000000000004",
+      "ean_original": "0000000000004",
+      "quantidade": 3
+    },
+    {
+      "ean": "0000000000005",
+      "ean_original": "0000000000005",
+      "quantidade": 3
+    },
+    {
+      "ean": "0000000000009",
+      "ean_original": "0000000000009",
+      "quantidade": 5
+    },
+    {
+      "ean": "0000000000010",
+      "ean_original": "0000000000010",
+      "quantidade": 10
+    },
+    {
+      "ean": "0000000000011",
+      "ean_original": "0000000000011",
+      "quantidade": 15
+    },
+    {
+      "ean": "0000000000012",
+      "ean_original": "0000000000012",
+      "quantidade": 20
+    },
+    {
+      "ean": "0000000000013",
+      "ean_original": "0000000000013",
+      "quantidade": 25
+    },
+    {
+      "ean": "0000000000014",
+      "ean_original": "0000000000014",
+      "quantidade": 30
+    },
+    {
+      "ean": "0000000000015",
+      "ean_original": "0000000000015",
+      "quantidade": 35
+    },
+    {
+      "ean": "0000000000016",
+      "ean_original": "0000000000016",
+      "quantidade": 40
+    },
+    {
+      "ean": "0000000000017",
+      "ean_original": "0000000000017",
+      "quantidade": 45
+    },
+    {
+      "ean": "0000000000018",
+      "ean_original": "0000000000018",
+      "quantidade": 50
+    }
+  ]
+}

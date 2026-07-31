@@ -224,6 +224,21 @@ Configuração: seção `[auth]`, chave `senha`, em `.streamlit/secrets.toml`.
 Sem essa seção configurada, o app mostra um erro claro em vez de travar
 com uma exceção genérica.
 
+## Dados de demonstração
+
+A pasta `dados_demo/` na raiz do projeto contém um conjunto de dados
+**100% fictícios** (loja, consultor, produtos e EANs inventados),
+gerados por `scripts/gerar_dados_demo.py` — usada para demonstrar o app
+publicado no Streamlit Community Cloud ao TI antes das credenciais reais
+do DigitalOcean Spaces existirem. Ao contrário de `data/sample/` e
+`data/onedrive_simulado/` (dados reais de teste, fora do Git), essa pasta
+é **commitada de propósito**, já que o repositório é público e nada nela
+é sensível.
+
+Ver [`dados_demo/LEIA-ME.md`](dados_demo/LEIA-ME.md) para os detalhes —
+inclusive **quando e como remover essa pasta** assim que o app estiver
+rodando com dados reais.
+
 ## Pendências conhecidas
 
 - **O código da loja na página Upload é digitado livremente**, sem
