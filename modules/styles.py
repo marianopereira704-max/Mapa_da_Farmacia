@@ -196,6 +196,86 @@ def aplicar_estilo() -> None:
             padding: 18px !important;
         }}
 
+        /* ---- Campo Consultor (Aba Upload) — casado visualmente com o
+        campo Loja ao lado ----
+        Loja usa o componente externo streamlit-searchbox (React, CSS
+        próprio, ver style_overrides em app.py); Consultor é um
+        st.text_input NATIVO. Por padrão os dois ficam com aparência bem
+        diferente (o searchbox vem mais alto, com cantos menos
+        arredondados, borda que só aparece quando focado — na cor
+        "primária" padrão do Streamlit, vermelha — e ícones de limpar/
+        abrir). Este bloco força o text_input nativo a usar os MESMOS
+        valores (altura, borda, raio, fundo, cor de texto/placeholder)
+        passados ao searchbox via style_overrides — as constantes em
+        config.py são a fonte única dos dois lados, pra não haver deriva
+        entre eles. Escopado via o marcador .mdf-campo-consultor-marker
+        (mesmo padrão dos demais blocos acima) pra não afetar nenhum
+        outro text_input do app (busca de produto, senha de login etc.). */
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-campo-consultor-marker) [data-testid="stTextInput"] input {{
+            height: {config.ALTURA_CAMPO_LOJA_CONSULTOR_PX}px !important;
+            min-height: {config.ALTURA_CAMPO_LOJA_CONSULTOR_PX}px !important;
+            border: 1px solid {config.BORDA_CAMPO_LOJA_CONSULTOR} !important;
+            border-radius: {config.RAIO_CAMPO_LOJA_CONSULTOR_PX}px !important;
+            background: {config.FUNDO_CAMPO_LOJA_CONSULTOR} !important;
+            color: {config.TEXTO_CAMPO_LOJA_CONSULTOR} !important;
+            font-size: {config.FONTE_CAMPO_LOJA_CONSULTOR_PX}px !important;
+            box-shadow: none !important;
+        }}
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-campo-consultor-marker) [data-testid="stTextInput"] input::placeholder {{
+            color: {config.PLACEHOLDER_CAMPO_LOJA_CONSULTOR} !important;
+        }}
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-campo-consultor-marker) [data-testid="stTextInput"] input:focus {{
+            border-color: {config.COR_NAVY} !important;
+            box-shadow: none !important;
+        }}
+        /* O wrapper do BaseWeb (div pai do <input>) tem sua própria borda/
+        fundo por baixo do input — sem zerá-los, uma borda dupla ou um
+        fundo cinza residual apareceria por trás do que definimos acima. */
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-campo-consultor-marker) [data-testid="stTextInput"] [data-baseweb="input"] {{
+            border: none !important;
+            background: transparent !important;
+            box-shadow: none !important;
+        }}
+
+        /* ---- Rótulo "Loja" desenhado por fora do streamlit-searchbox ----
+        Complementa o bloco acima: o componente teria seu PRÓPRIO rótulo
+        embutido (se recebesse label="Loja"), com espaçamento fixo até a
+        caixa (não configurável via style_overrides) — diferente do
+        espaçamento nativo do Streamlit entre rótulo e widget. Por isso o
+        app.py chama st_searchbox(label=None) e desenha este rótulo à
+        parte (ver o st.markdown logo antes da chamada). Os valores abaixo
+        (font-size, cor, min-height, margin-bottom) foram extraídos do
+        bundle do próprio Streamlit — não são uma estimativa — pra
+        reproduzir o rótulo nativo com exatidão: fonte 0.875rem, cor
+        #31333F (token bodyText do tema claro), min-height 1.5rem (24px,
+        igual ao tema.fontSizes.xl) e margin-bottom 0.25rem (4px, igual a
+        theme.spacing.twoXS). */
+        .mdf-campo-loja-label {{
+            font-size: 0.875rem;
+            color: #31333F;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            min-height: 1.5rem;
+            height: auto;
+            margin-bottom: 0.25rem;
+        }}
+        /* O Streamlit insere um espaçamento padrão (1rem) entre elementos
+        vizinhos dentro da mesma coluna — como o rótulo acima e o
+        st_searchbox agora são DOIS elementos separados (e não um só
+        widget nativo, que já embute rótulo + caixa como uma unidade),
+        esse espaçamento se somaria ao margin-bottom do rótulo, deixando
+        a caixa da Loja mais baixa que a do Consultor. Este seletor mira
+        o elemento que envolve especificamente o iframe do searchbox (via
+        o atributo title que o próprio componente usa internamente — ver
+        main.js do streamlit-searchbox) e cancela esse espaçamento padrão
+        com uma margem negativa do mesmo tamanho, deixando o
+        margin-bottom do rótulo acima como a ÚNICA fonte de espaço entre
+        rótulo e caixa — igual ao widget nativo. */
+        div[data-testid="stElementContainer"]:has(iframe[title="streamlit_searchbox.searchbox"]) {{
+            margin-top: -1rem !important;
+        }}
+
         /* Cards de produto (linhas dentro do quadro) — sem borda própria,
         só um leve background para diferenciar cada linha. */
         div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-row-marker) {{
@@ -268,7 +348,7 @@ def aplicar_estilo() -> None:
             text-align: right;
         }}
 
-        /* Badges de status (sugestão automática / confirmado / não encontrado) */
+        /* Badges de status (sugestão automática / confirmado / sem estoque / não encontrado) */
         .mdf-badge {{
             font-size: 12px; font-weight: 600; padding: 3px 8px;
             border-radius: 6px; display: inline-block;
@@ -276,6 +356,7 @@ def aplicar_estilo() -> None:
         .mdf-badge-auto {{ background: {config.COR_AMBAR_BG}; color: {config.COR_AMBAR_TEXTO}; }}
         .mdf-badge-ok {{ background: {config.COR_VERDE_BG}; color: {config.COR_VERDE_TEXTO}; }}
         .mdf-badge-alterado {{ background: {config.COR_AZUL_BG}; color: {config.COR_AZUL_TEXTO}; }}
+        .mdf-badge-sem-estoque {{ background: {config.COR_CINZA_BG}; color: {config.COR_CINZA_TEXTO}; }}
         .mdf-badge-nao-encontrado {{ background: #EEF0F3; color: #7A8699; }}
         .mdf-badge-frentes {{ background: {config.COR_ROXO_BG}; color: {config.COR_ROXO_TEXTO}; }}
 
@@ -555,7 +636,18 @@ def status_produto(quantidade_original, quantidade_atual, origem: str | None, ea
     a cada rerun a partir da quantidade original (calculada) comparada com
     a quantidade atualmente editada pelo consultor.
 
-    Retorna um dos códigos: "nao_localizado" | "alterado" | "auto" | "confirmado".
+    Retorna um dos códigos: "nao_localizado" | "alterado" | "auto" |
+    "sem_estoque" | "confirmado".
+
+    Nota sobre "sem_estoque" vs. "confirmado": quando origem não é "auto",
+    quantidade_original É o próprio valor de estoque atual da loja (ver
+    montar_tabela_ajuste_mix — quantidade = estoque quando não há sugestão
+    automática), então basta checar quantidade_original == 0 aqui, sem
+    precisar receber o estoque bruto como parâmetro separado. "confirmado"
+    passa a significar só "a loja tem estoque desse produto" — antes desta
+    distinção, um produto zerado que ficou fora do top N de sugestão
+    automática também aparecia como "confirmado", o que confundia o
+    consultor sobre o que a loja realmente tem.
     """
     if not ean_valido:
         return "nao_localizado"
@@ -563,6 +655,8 @@ def status_produto(quantidade_original, quantidade_atual, origem: str | None, ea
         return "alterado"
     if origem == "auto":
         return "auto"
+    if quantidade_original == 0:
+        return "sem_estoque"
     return "confirmado"
 
 
@@ -573,6 +667,7 @@ def status_produto(quantidade_original, quantidade_atual, origem: str | None, ea
 _MAPA_FILTRO_STATUS = {
     "Estoque confirmado": "confirmado",
     "Sugestão automática": "auto",
+    "Sem estoque": "sem_estoque",
     "Alterado manualmente": "alterado",
 }
 
@@ -587,13 +682,16 @@ def codigo_status_do_filtro(opcao_selecionada: str) -> str | None:
 
 def badge_status(status: str) -> str:
     """Retorna o HTML de um badge de status, a partir do código calculado
-    por status_produto() ("nao_localizado" | "alterado" | "auto" | "confirmado")."""
+    por status_produto() ("nao_localizado" | "alterado" | "auto" |
+    "sem_estoque" | "confirmado")."""
     if status == "nao_localizado":
         return '<span class="mdf-badge mdf-badge-nao-encontrado">EAN não localizado</span>'
     if status == "alterado":
         return '<span class="mdf-badge mdf-badge-alterado">alterado manualmente</span>'
     if status == "auto":
         return '<span class="mdf-badge mdf-badge-auto">sugestão automática</span>'
+    if status == "sem_estoque":
+        return '<span class="mdf-badge mdf-badge-sem-estoque">sem estoque</span>'
     return '<span class="mdf-badge mdf-badge-ok">estoque confirmado</span>'
 
 

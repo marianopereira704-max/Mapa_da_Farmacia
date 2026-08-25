@@ -241,14 +241,19 @@ rodando com dados reais.
 
 ## Pendências conhecidas
 
-- **O código da loja na página Upload é digitado livremente**, sem
-  validação contra uma lista real — porque essa fonte de verdade ainda
-  não existe. O plano é integrar futuramente com uma API do TI que mantém
-  a lista de lojas ativas na rede, mas essa API ainda não tem documentação
-  técnica disponível. Até lá, um erro de digitação na loja cria uma pasta
-  nova em vez de dar erro — vale conferir visualmente o que foi digitado
-  antes de enviar. (O consultor também é livre, mas não tem esse risco —
-  é só um metadado, não parte do caminho do arquivo.)
+- ~~API de lojas do TI~~ **Integrada e validada** (`modules/lojas_api.py`,
+  seção `[api_lojas]` no secrets.toml — testado contra a API real: 584
+  lojas ativas retornadas). O campo "Loja (código)" da página Upload é um
+  `selectbox` alimentado pela API (usa `legacyId`; elimina o risco antigo
+  de erro de digitação criar uma pasta nova por engano), filtrado para só
+  mostrar lojas com `status_title == "Ativo"`. O nome exibido vem de
+  `fantasyName` (nome comercial da loja; `businessName` — razão
+  social/titular do CNPJ — é só fallback). O "Consultor" é
+  pré-preenchido com o integrante de `team[]` cujo `sector` é
+  "Consultoria Interna" (fica em branco, editável, se a loja não tiver
+  ninguém desse setor na equipe). Se a API estiver indisponível ou mal
+  configurada, o app cai de volta para texto livre (loja e consultor) em
+  vez de travar o Upload.
 - **Backend `graph_api` (Microsoft Graph) nunca foi testado com
   credenciais reais** — a aprovação de TI/Azure AD para esse caminho não
   saiu, e o projeto migrou para DigitalOcean Spaces como plano principal.

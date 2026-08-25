@@ -158,6 +158,8 @@ COR_AZUL_BG = "#DCEAFB"
 COR_AZUL_TEXTO = "#1D4E89"
 COR_ROXO_BG = "#F0EBFA"
 COR_ROXO_TEXTO = "#5B3A9E"
+COR_CINZA_BG = "#EEF0F3"
+COR_CINZA_TEXTO = "#4B5563"
 
 LOGO_PATH = "assets/logo_rmc.webp"
 
@@ -175,6 +177,7 @@ OPCOES_FILTRO_STATUS = [
     "Todos",
     "Estoque confirmado",
     "Sugestão automática",
+    "Sem estoque",
     "Alterado manualmente",
 ]
 
@@ -197,3 +200,24 @@ ALTURA_PAINEL_PRODUTOS_PX = 480
 # dentro dessa altura — aparece inteira, sem cortar bordas, com espaço
 # vazio (letterbox) se a proporção da foto não bater exatamente.
 ALTURA_CARTAO_FOTO_PX = 280
+
+# ---------------------------------------------------------------------------
+# Campos Loja / Consultor (Aba Upload)
+# ---------------------------------------------------------------------------
+
+# O campo Loja usa o componente externo streamlit-searchbox (um combobox
+# React, com CSS próprio) e o campo Consultor usa st.text_input NATIVO do
+# Streamlit — tecnologias diferentes que, por padrão, têm aparência
+# diferente (altura, borda, cantos, cor de foco). Pedido explícito: os
+# dois têm que parecer EXATAMENTE o mesmo tipo de campo. Estas constantes
+# são a fonte única usada nos dois lugares — style_overrides do
+# st_searchbox em app.py E o CSS do text_input Consultor em styles.py —
+# pra garantir que não fiquem "quase iguais" por terem sido ajustados
+# separadamente.
+ALTURA_CAMPO_LOJA_CONSULTOR_PX = 42
+RAIO_CAMPO_LOJA_CONSULTOR_PX = 8
+BORDA_CAMPO_LOJA_CONSULTOR = "#E4E7EB"  # mesma cor de borda usada nos cartões (.mdf-painel-marker etc.)
+FUNDO_CAMPO_LOJA_CONSULTOR = "#FFFFFF"
+TEXTO_CAMPO_LOJA_CONSULTOR = "#31333F"  # cor de texto padrão do Streamlit (tema claro)
+PLACEHOLDER_CAMPO_LOJA_CONSULTOR = "#8A93A3"  # mesmo cinza usado em .mdf-produto-meta/.mdf-foto-vazio
+FONTE_CAMPO_LOJA_CONSULTOR_PX = 14

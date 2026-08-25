@@ -28,10 +28,12 @@ import modules.auth as auth
 import modules.data_loader as dl
 import modules.image_utils as image_utils
 import modules.inventario as inventario
+import modules.lojas_api as lojas_api
 import modules.pdf_export as pdf_export
 import modules.styles as styles
 from modules.file_resolver import ArquivoObrigatorioAusenteError, localizar_arquivo
 from modules.storage import StorageError, get_storage_client
+from streamlit_searchbox import st_searchbox
 
 st.set_page_config(
     page_title=config.APP_TITLE,
@@ -70,6 +72,20 @@ storage = obter_storage()
 @st.cache_data(ttl=600, show_spinner="Carregando lista de lojas...")
 def _descobrir_inventario_cache(_storage, versao_cache: int) -> dict:
     return inventario.descobrir_inventario(_storage)
+
+
+# ---------------------------------------------------------------------------
+# Lista oficial de lojas (API do TI) — usada só na página Upload, para o
+# seletor de loja e o pré-preenchimento do consultor. Cacheada por 1h: é
+# uma lista que muda raramente (não a cada upload), então não precisa do
+# TTL curto nem do padrão versao_cache usado no inventário/dados de loja.
+# De propósito NÃO é bumpada pela atualização automática ao entrar em
+# "Selecionar Loja"/"Análise" (ver mais abaixo) — só o TTL de 1h força a
+# recarga desta lista, pra não bater na API do TI a cada navegação.
+@st.cache_data(ttl=3600, show_spinner="Carregando lista de lojas (API do TI)...")
+def _carregar_lojas_api() -> list[lojas_api.Loja]:
+    config_api = dict(st.secrets.get("api_lojas", {}))
+    return lojas_api.obter_lojas(config_api.get("url", ""), config_api.get("api_key", ""))
 
 
 # ---------------------------------------------------------------------------
@@ -170,18 +186,62 @@ _ROTULOS_ARQUIVOS_UPLOAD = {
     "foto_depois": "Foto Depois",
 }
 
+# CSS-in-JS aplicado ao componente React do campo Loja (streamlit-
+# searchbox), pra ficar visualmente IDÊNTICO ao campo Consultor ao lado
+# (st.text_input nativo — CSS dele em styles.py, marcador
+# .mdf-campo-consultor-marker). Usa as mesmas constantes de config.py dos
+# dois lados, de propósito, pra não haver deriva entre eles. Sem isso, o
+# searchbox vem com a aparência padrão do react-select: mais alto, cantos
+# menos arredondados, sem borda visível em repouso e borda vermelha
+# (cor "primária" padrão do Streamlit) quando focado/aberto — bem
+# diferente do text_input nativo ao lado.
+_ESTILO_CAMPO_LOJA = {
+    "searchbox": {
+        "control": {
+            "minHeight": f"{config.ALTURA_CAMPO_LOJA_CONSULTOR_PX}px",
+            "border": f"1px solid {config.BORDA_CAMPO_LOJA_CONSULTOR}",
+            "borderRadius": f"{config.RAIO_CAMPO_LOJA_CONSULTOR_PX}px",
+            "backgroundColor": config.FUNDO_CAMPO_LOJA_CONSULTOR,
+            "boxShadow": "none",
+            "&:hover": {"border": f"1px solid {config.BORDA_CAMPO_LOJA_CONSULTOR}"},
+        },
+        "singleValue": {
+            "color": config.TEXTO_CAMPO_LOJA_CONSULTOR,
+            "fontSize": f"{config.FONTE_CAMPO_LOJA_CONSULTOR_PX}px",
+        },
+        "input": {
+            "color": config.TEXTO_CAMPO_LOJA_CONSULTOR,
+            "fontSize": f"{config.FONTE_CAMPO_LOJA_CONSULTOR_PX}px",
+        },
+        "placeholder": {
+            "color": config.PLACEHOLDER_CAMPO_LOJA_CONSULTOR,
+            "fontSize": f"{config.FONTE_CAMPO_LOJA_CONSULTOR_PX}px",
+        },
+        "menuList": {"backgroundColor": config.FUNDO_CAMPO_LOJA_CONSULTOR},
+    },
+    # Ícones (limpar / abrir) na mesma cor cinza discreta usada em outros
+    # textos secundários do app, em vez das cores padrão do react-select.
+    "clear": {"icon": "cross", "fill": config.PLACEHOLDER_CAMPO_LOJA_CONSULTOR, "stroke": config.PLACEHOLDER_CAMPO_LOJA_CONSULTOR},
+    "dropdown": {"fill": config.PLACEHOLDER_CAMPO_LOJA_CONSULTOR},
+}
+
 
 # ---------------------------------------------------------------------------
-# Navegação: 3 páginas na sidebar (Upload / Selecionar Loja / Análise) +
-# botão Atualizar (com confirmação, inalterado). Substitui por completo a
-# antiga navegação por Consultor > Loja > Ciclo — o inventário agora é
-# descoberto de uma vez (ver acima), então a navegação virou uma tela de
-# seleção visual (página Selecionar Loja), não mais um funil de
-# selectboxes dependentes na sidebar.
+# Navegação: 3 páginas na sidebar (Upload / Selecionar Loja / Análise).
+# Substitui por completo a antiga navegação por Consultor > Loja > Ciclo — o
+# inventário agora é descoberto de uma vez (ver acima), então a navegação
+# virou uma tela de seleção visual (página Selecionar Loja), não mais um
+# funil de selectboxes dependentes na sidebar.
 # ---------------------------------------------------------------------------
 
 PAGINAS_SIDEBAR = ["Upload", "Selecionar Loja", "Análise"]
 _SLUGS_PAGINAS = {"Upload": "upload", "Selecionar Loja": "selecionar_loja", "Análise": "analise"}
+
+# Páginas que trabalham em cima do inventário/API (ao invés de só formulário
+# de envio) — entrar nelas dispara uma atualização automática dos dados (ver
+# abaixo), pra tirar do usuário o esforço manual de lembrar de apertar um
+# botão "Atualizar" antes de analisar uma loja.
+_PAGINAS_COM_ATUALIZACAO_AUTOMATICA = ("Selecionar Loja", "Análise")
 
 # Botões espalhados pela página (ex.: "Abrir" num cartão de ciclo, "Enviar
 # novo mês", os próprios itens do menu lateral abaixo) precisam poder
@@ -193,11 +253,27 @@ _SLUGS_PAGINAS = {"Upload": "upload", "Selecionar Loja": "selecionar_loja", "An�
 # widget de página ser instanciado — o mesmo padrão já usado para
 # pré-preencher o campo "Loja" da página Upload a partir do cartão
 # "Enviar novo mês".
-if "_pagina_solicitada" in st.session_state:
-    st.session_state["pagina_atual"] = st.session_state.pop("_pagina_solicitada")
-
+#
+# Atualização automática: antes existia um botão manual "Atualizar" na
+# sidebar (com confirmação) que só bumpava versao_cache quando o usuário
+# lembrava de clicar — removido porque o usuário pode esquecer e analisar
+# dados desatualizados sem perceber. Em vez disso, entrar em "Selecionar
+# Loja" ou "Análise" (vindo de QUALQUER outra página, incluindo a primeira
+# vez que a página é resolvida) bumpa versao_cache sozinho — essas duas
+# páginas são as que realmente dependem do inventário estar fresco. Não
+# chama st.cache_data.clear() (isso limparia também o cache da API do TI,
+# que tem TTL próprio de 1h e não precisa ser forçado a cada navegação).
 st.session_state.setdefault("pagina_atual", "Selecionar Loja")
 st.session_state.setdefault("versao_cache", 0)
+
+if "_pagina_solicitada" in st.session_state:
+    _pagina_anterior = st.session_state["pagina_atual"]
+    st.session_state["pagina_atual"] = st.session_state.pop("_pagina_solicitada")
+    if (
+        st.session_state["pagina_atual"] != _pagina_anterior
+        and st.session_state["pagina_atual"] in _PAGINAS_COM_ATUALIZACAO_AUTOMATICA
+    ):
+        st.session_state["versao_cache"] += 1
 
 with st.sidebar:
     # Menu de páginas como 3 botões empilhados (não st.radio nativo) —
@@ -214,23 +290,13 @@ with st.sidebar:
             if st.button(pagina_item, key=f"nav_{_SLUGS_PAGINAS[pagina_item]}", width="stretch"):
                 if not pagina_ativa:
                     st.session_state["_pagina_solicitada"] = pagina_item
+                    # Navegação "normal" pra Upload (não veio do botão
+                    # "Upload" de um cartão de ciclo específico) — garante
+                    # que não sobra contexto de mês de uma visita anterior
+                    # (ver _upload_ano_mes_contexto na página Upload).
+                    st.session_state["_upload_ano_mes_contexto"] = None
+                    st.session_state["_upload_ano_mes_contexto_loja"] = None
                     st.rerun()
-
-    st.divider()
-    if st.button("🔄 Atualizar", use_container_width=True):
-        st.session_state["_confirmar_atualizar"] = True
-
-    if st.session_state.get("_confirmar_atualizar"):
-        st.warning("Tem certeza? Isso recarrega os dados do armazenamento e pode sobrescrever edições não salvas.")
-        c1, c2 = st.columns(2)
-        if c1.button("Sim", use_container_width=True):
-            st.session_state["versao_cache"] += 1
-            st.session_state["_confirmar_atualizar"] = False
-            st.cache_data.clear()
-            st.rerun()
-        if c2.button("Não", use_container_width=True):
-            st.session_state["_confirmar_atualizar"] = False
-            st.rerun()
 
 pagina_atual = st.session_state["pagina_atual"]
 
@@ -243,42 +309,209 @@ if pagina_atual == "Upload":
     styles.cabecalho("Envio de arquivos")
 
     st.markdown("#### Envio de arquivos por loja")
-    # PENDÊNCIA CONHECIDA: o código da loja é digitado livremente (sem
-    # validação contra uma lista) porque ainda não existe uma fonte de
-    # verdade para "quais lojas existem" — isso deve vir, no futuro, de
-    # uma API do TI que mantém a lista real de lojas ativas na rede
-    # (ainda sem documentação técnica disponível). Ver README.md.
     st.caption(
-        "O código da loja ainda é digitado livremente — a lista oficial de "
-        "lojas ativas ainda não está disponível via API do TI (pendência "
-        "conhecida, ver README). O consultor não faz mais parte do caminho "
-        "do arquivo — é salvo junto do envio (metadata.json do ciclo) e "
-        "serve de filtro na página **Selecionar Loja**. Depois de enviar, "
-        "clique em **Atualizar** na barra lateral para que os arquivos "
-        "apareçam nas outras páginas."
+        "Faça o Upload dos arquivos nos campos indicados."
     )
+
+    # ---- Lista oficial de lojas (API do TI) ----
+    # Busca cacheada (ver _carregar_lojas_api). Se a API falhar por
+    # qualquer motivo (secrets não configurados, rede, chave inválida,
+    # formato de resposta inesperado), cai de volta para texto livre em
+    # vez de travar a página inteira — o upload continua funcionando,
+    # só sem a busca/autopreenchimento.
+    try:
+        lojas_disponiveis = _carregar_lojas_api()
+        erro_lojas_api = None
+    except lojas_api.LojasAPIError as e:
+        lojas_disponiveis = []
+        erro_lojas_api = str(e)
+
+    if erro_lojas_api:
+        st.warning(
+            f"Não foi possível carregar a lista oficial de lojas (API do TI): "
+            f"{erro_lojas_api}. Digite o código da loja manualmente."
+        )
+
+    mapa_lojas_por_codigo = {loja.codigo: loja for loja in lojas_disponiveis}
+
+    def _rotulo_loja(codigo):
+        loja_obj = mapa_lojas_por_codigo.get(codigo)
+        if loja_obj is None:
+            return codigo
+        if loja_obj.nome:
+            return f"{codigo} — {loja_obj.nome}"
+        return codigo
+
+    def _filtrar_lojas_por_prefixo(texto_busca: str, limite: int = 30):
+        """Filtra códigos de loja que COMEÇAM com o texto digitado (não
+        "contém", diferente da busca embutida de um selectbox comum) e
+        ordena em ordem alfabética simples — para códigos numéricos em
+        string, isso já produz a sequência esperada (prefixo mais curto
+        primeiro): "1", "10", "11", "111", "1111", ... Retorna a lista
+        limitada a `limite` itens e o total real de correspondências."""
+        texto_busca = texto_busca.strip()
+        if not texto_busca:
+            return [], 0
+        correspondentes = sorted(c for c in mapa_lojas_por_codigo if c.startswith(texto_busca))
+        return correspondentes[:limite], len(correspondentes)
+
+    def _buscar_lojas_searchbox(texto_busca: str):
+        """search_function do st_searchbox — devolve pares (rótulo, valor)
+        na ordem de prefixo definida acima. Se nada bater com o texto
+        digitado, oferece o próprio texto como opção (mesmo comportamento
+        de fallback que a busca antiga: loja recém-inativada ou cadastro
+        desatualizado não deve travar o envio)."""
+        texto_busca = texto_busca.strip()
+        if not texto_busca:
+            return []
+        codigos_filtrados, _total = _filtrar_lojas_por_prefixo(texto_busca)
+        if not codigos_filtrados:
+            return [(f"{texto_busca}  (fora da lista oficial — usar mesmo assim)", texto_busca)]
+        return [(_rotulo_loja(c), c) for c in codigos_filtrados]
 
     with st.container(border=True):
         st.markdown('<span class="mdf-painel-form-marker"></span>', unsafe_allow_html=True)
 
-        c_consultor, c_loja, c_mes = st.columns(3)
-        with c_consultor:
-            upload_consultor = st.text_input("Consultor", key="upload_consultor")
+        # Pré-preenchimento vindo de "Enviar novo mês" ou do botão "Upload"
+        # de um cartão de ciclo (página Selecionar Loja) — lido UMA VEZ aqui
+        # em cima (fora do if/else de qual componente de Loja é usado),
+        # porque tanto o campo Loja (dentro de c_loja) quanto o
+        # pré-preenchimento do Consultor (dentro de c_consultor, mais
+        # abaixo) precisam dele, e o ramo "erro_lojas_api" (fallback sem a
+        # API do TI) nunca define essa variável sozinho.
+        loja_prefill = st.session_state.pop("_upload_loja_prefill", None)
+
+        c_loja, c_consultor = st.columns(2)
         with c_loja:
-            upload_loja = st.text_input("Loja (código)", key="upload_loja")
-        with c_mes:
-            # Só o mês/ano importa aqui — o dia escolhido é descartado (ver
-            # abaixo, upload_mes_ano.strftime("%Y-%m")). Formato "AAAA-MM"
-            # para a subpasta de mês (ver config.py / README).
-            upload_mes_ano = st.date_input(
-                "Mês/ano",
-                value=date.today(),
-                format="YYYY/MM/DD",
-                help="Só o mês e o ano são usados — o dia escolhido é ignorado.",
-                key="upload_mes_ano",
-            )
+            if erro_lojas_api:
+                upload_loja = st.text_input("Loja", key="upload_loja")
+            else:
+                # Componente externo streamlit-searchbox: visualmente é uma
+                # seleção normal (um campo só, com dropdown), mas mantém a
+                # busca por prefixo definida em _filtrar_lojas_por_prefixo
+                # (exatamente o comportamento pedido: "1", "10", "11",
+                # "111", ... e não "22" aparecendo ao digitar "1").
+                if loja_prefill:
+                    # Força o componente a recriar do zero com o valor
+                    # pré-preenchido (ver "Ir para Upload" na página
+                    # Selecionar Loja) — descartar o session_state antigo
+                    # do widget é necessário porque st_searchbox só lê
+                    # default_searchterm/default_options na primeira vez
+                    # que a key aparece no session_state.
+                    st.session_state.pop("upload_loja_searchbox", None)
+                # Rótulo "Loja" desenhado por FORA do componente (em vez de
+                # usar o parâmetro label do st_searchbox) — o rótulo interno
+                # do componente tem seu próprio espaçamento embutido (fixo,
+                # não configurável via style_overrides) até a caixa de
+                # busca, diferente do espaçamento que o Streamlit usa entre
+                # o rótulo e a caixa do Consultor nativo ao lado. Este
+                # <label> replica EXATAMENTE a métrica que o Streamlit usa
+                # para o rótulo de qualquer widget nativo (fonte 0.875rem,
+                # cor #31333F = tema claro "bodyText", min-height 1.5rem,
+                # margin-bottom 0.25rem — valores extraídos do bundle do
+                # Streamlit, não estimados), pra a caixa da Loja nascer na
+                # mesma altura da caixa do Consultor. A regra CSS que
+                # cancela o espaçamento padrão entre elementos (que o
+                # Streamlit insere entre este rótulo e o componente
+                # seguinte) está em styles.py.
+                st.markdown(
+                    '<label class="mdf-campo-loja-label"><span>Loja</span></label>',
+                    unsafe_allow_html=True,
+                )
+                upload_loja = st_searchbox(
+                    _buscar_lojas_searchbox,
+                    key="upload_loja_searchbox",
+                    label=None,
+                    placeholder="Digite o código da loja...",
+                    default="",
+                    default_searchterm=loja_prefill or "",
+                    default_options=(
+                        [(_rotulo_loja(loja_prefill), loja_prefill)] if loja_prefill else None
+                    ),
+                    clear_on_submit=False,
+                    style_overrides=_ESTILO_CAMPO_LOJA,
+                )
+                if not upload_loja:
+                    upload_loja = ""
+        with c_consultor:
+            # Pré-preenche o Consultor a partir da loja escolhida ao lado —
+            # escrito em session_state ANTES deste widget ser instanciado
+            # (Loja agora vem antes de Consultor na tela, então dá pra
+            # calcular isso na hora, sem o truque de ler session_state de
+            # antemão que era necessário quando a ordem era invertida).
+            #
+            # Dois caminhos, tratados separadamente de propósito:
+            #
+            #   1. loja_prefill (vindo de "Enviar novo mês" ou do botão
+            #      "Upload" de um cartão de ciclo): preenche direto pelo
+            #      CÓDIGO da loja, sem esperar upload_loja. Necessário
+            #      porque o st_searchbox só devolve um valor não-vazio em
+            #      upload_loja depois que o usuário CLICA na sugestão — o
+            #      campo já aparece preenchido visualmente (default_searchterm/
+            #      default_options, ver c_loja acima), mas upload_loja
+            #      continua "" até essa confirmação. Sem tratar esse caso à
+            #      parte, o Consultor ficaria em branco mesmo com a Loja já
+            #      visível na tela.
+            #
+            #   2. upload_loja mudou (usuário digitou/selecionou outra loja
+            #      manualmente, ou confirmou a sugestão pré-preenchida): só
+            #      reage quando upload_loja é CONFIRMADO (truthy) — nunca
+            #      quando ele está vazio. Esse guard é essencial: nos reruns
+            #      entre o pré-preenchimento (caminho 1) e o usuário
+            #      efetivamente clicar na sugestão, upload_loja continua ""
+            #      por vários reruns — sem o "and upload_loja" aqui, cada um
+            #      desses reruns re-disparava esta condição (upload_loja=""
+            #      diferente do que foi salvo no caminho 1) e apagava de
+            #      volta o Consultor que acabou de ser preenchido.
+            #
+            # Em ambos os casos, o valor manual que o consultor tiver digitado
+            # depois de a loja já estar confirmada continua preservado (ex.:
+            # cobertura de férias, upload feito por quem não é a consultora
+            # oficial) — só reage a uma MUDANÇA de loja, nunca sobrescreve
+            # uma edição livre no mesmo ciclo.
+            if loja_prefill:
+                loja_obj_pendente = mapa_lojas_por_codigo.get(loja_prefill)
+                st.session_state["upload_consultor"] = (
+                    (loja_obj_pendente.consultor if loja_obj_pendente else None) or ""
+                )
+                st.session_state["_ultima_loja_upload"] = loja_prefill
+            elif upload_loja and upload_loja != st.session_state.get("_ultima_loja_upload"):
+                st.session_state["_ultima_loja_upload"] = upload_loja
+                loja_obj_pendente = mapa_lojas_por_codigo.get(upload_loja)
+                st.session_state["upload_consultor"] = (
+                    (loja_obj_pendente.consultor if loja_obj_pendente else None) or ""
+                )
+                # Contexto de mês (ver _upload_ano_mes_contexto abaixo) só
+                # vale enquanto a loja continuar sendo aquela pra qual o
+                # botão "Upload" de um cartão de ciclo foi clicado — se o
+                # usuário trocar pra outra loja aqui na tela (uma seleção
+                # CONFIRMADA diferente da que veio pré-preenchida), o
+                # contexto não faz mais sentido (era de OUTRA loja) e cai
+                # pro comportamento padrão (mês atual, sem ícones).
+                if upload_loja != st.session_state.get("_upload_ano_mes_contexto_loja"):
+                    st.session_state["_upload_ano_mes_contexto"] = None
+                    st.session_state["_upload_ano_mes_contexto_loja"] = None
+            st.markdown('<span class="mdf-campo-consultor-marker"></span>', unsafe_allow_html=True)
+            upload_consultor = st.text_input("Consultor", key="upload_consultor")
 
         st.markdown("&nbsp;", unsafe_allow_html=True)
+
+        # Contexto de "completar um ciclo específico" — definido pelo botão
+        # "Upload" de um cartão de mês já existente (página Selecionar
+        # Loja). Enquanto ativo: cada campo de arquivo mostra ✅ (já tem
+        # dado) ou ⚠️ (falta), usando o mesmo inventário que já monta o
+        # checklist daquele cartão, e o envio grava NESSE mês em vez do
+        # atual (ver ano_mes mais abaixo). Fora desse fluxo (Upload pela
+        # barra lateral, ou "Enviar novo mês"), os dois ficam None e tudo
+        # se comporta exatamente como antes.
+        ano_mes_contexto = st.session_state.get("_upload_ano_mes_contexto")
+        loja_contexto = st.session_state.get("_upload_ano_mes_contexto_loja")
+        arquivos_existentes_contexto = None
+        if ano_mes_contexto and loja_contexto:
+            inventario_contexto = _descobrir_inventario_cache(storage, st.session_state["versao_cache"])
+            ciclo_contexto = inventario_contexto.get(loja_contexto, {}).get(ano_mes_contexto)
+            if ciclo_contexto:
+                arquivos_existentes_contexto = ciclo_contexto.get("arquivos", {})
 
         chaves_arquivos = list(_ROTULOS_ARQUIVOS_UPLOAD)
         col_esq, col_dir = st.columns(2)
@@ -287,8 +520,14 @@ if pagina_atual == "Upload":
         for chave, coluna in zip(chaves_arquivos, colunas_alternadas):
             with coluna:
                 extensoes_aceitas = [ext.lstrip(".") for ext in config.FILE_SPECS[chave]["extensions"]]
+                rotulo_arquivo = _ROTULOS_ARQUIVOS_UPLOAD[chave]
+                if arquivos_existentes_contexto is not None:
+                    rotulo_arquivo = (
+                        f"✅ {rotulo_arquivo}" if chave in arquivos_existentes_contexto
+                        else f"⚠️ {rotulo_arquivo}"
+                    )
                 arquivos_selecionados[chave] = st.file_uploader(
-                    _ROTULOS_ARQUIVOS_UPLOAD[chave],
+                    rotulo_arquivo,
                     type=extensoes_aceitas,
                     key=f"upload_arquivo_{chave}",
                 )
@@ -302,7 +541,15 @@ if pagina_atual == "Upload":
             elif not arquivos_preenchidos:
                 st.warning("Selecione ao menos um arquivo antes de enviar.")
             else:
-                ano_mes = upload_mes_ano.strftime("%Y-%m")
+                # Ciclo (mês) normalmente é sempre o mês/ano atual no
+                # momento do envio (ver item 4 do pedido de mudança
+                # original: "organizado já de maneira automática
+                # internamente, não deve aparecer para o usuário") — a
+                # ÚNICA exceção é o contexto acima (botão "Upload" de um
+                # cartão de ciclo já existente), que direciona o envio
+                # pro mês daquele cartão em vez do atual, pra completar
+                # exatamente aquele ciclo.
+                ano_mes = ano_mes_contexto or date.today().strftime("%Y-%m")
                 loja_limpa = upload_loja.strip()
 
                 # Verifica CADA arquivo individualmente antes de gravar —
@@ -377,9 +624,12 @@ if pagina_atual == "Upload":
                 del st.session_state["_upload_conflitos"][chave]
                 st.rerun()
 
-    st.divider()
-    st.markdown("#### Base nacional de demanda (atualização mensal)")
-    with st.expander("O que é isso?"):
+    # Seção recolhida por padrão (só um item discreto, sem título em
+    # destaque nem divider) — o conteúdo por dentro é o mesmo de sempre
+    # (explicação + formulário de envio), só o ponto de entrada mudou pra
+    # não competir visualmente com o envio por loja, que é o uso do dia a
+    # dia desta página.
+    with st.expander("Base nacional de demanda", expanded=False):
         st.caption(
             "Base compartilhada de demanda de mercado, usada por todas as lojas "
             "(diferente da seção acima, que é por loja). Normalmente passa por "
@@ -388,9 +638,6 @@ if pagina_atual == "Upload":
             "'.parquet' — mais rápida de carregar. Enviar a planilha '.xlsx' "
             "bruta também funciona, como alternativa mais lenta."
         )
-
-    with st.container(border=True):
-        st.markdown('<span class="mdf-painel-form-marker"></span>', unsafe_allow_html=True)
         arquivo_base_nacional = st.file_uploader(
             "Arquivo da base nacional (.xlsx ou .parquet)",
             type=["xlsx", "parquet"],
@@ -425,23 +672,76 @@ elif pagina_atual == "Selecionar Loja":
         if not inventario_atual:
             st.info("Nenhuma loja encontrada ainda. Use a página **Upload** para enviar os primeiros arquivos.")
         else:
+            # Consultor e Supervisora vêm da API do TI — dado OFICIAL de
+            # cada loja (setores "Consultoria Interna" e "Supervisão" — ver
+            # modules/lojas_api.py), em vez do metadata.json de cada envio
+            # (que registra quem efetivamente fez o upload, podendo ser
+            # outra pessoa: cobertura de férias, upload feito pela
+            # supervisora etc.). Mesma lista cacheada já usada na página
+            # Upload — não gera uma chamada extra à API.
+            try:
+                lojas_api_disponiveis = _carregar_lojas_api()
+                erro_lojas_api_filtro = None
+            except lojas_api.LojasAPIError as e:
+                lojas_api_disponiveis = []
+                erro_lojas_api_filtro = str(e)
+
+            mapa_lojas_api_por_codigo = {loja.codigo: loja for loja in lojas_api_disponiveis}
+
+            if erro_lojas_api_filtro:
+                st.warning(
+                    f"Não foi possível carregar a lista oficial de lojas (API do TI) — "
+                    f"os filtros de Consultor e Supervisora ficam indisponíveis nesta "
+                    f"sessão: {erro_lojas_api_filtro}."
+                )
+
+            # As 3 listas de opção são compostas só a partir de lojas que
+            # JÁ TÊM algum envio (inventario_atual) — não faz sentido
+            # oferecer, como filtro, um consultor cujas lojas ainda não
+            # mandaram nada pra cá.
+            codigos_com_dados = sorted(inventario_atual.keys())
             consultores_distintos = sorted({
-                ciclo_info["metadata"]["consultor"]
-                for ciclos in inventario_atual.values()
-                for ciclo_info in ciclos.values()
-                if ciclo_info.get("metadata") and ciclo_info["metadata"].get("consultor")
+                mapa_lojas_api_por_codigo[codigo].consultor
+                for codigo in codigos_com_dados
+                if codigo in mapa_lojas_api_por_codigo and mapa_lojas_api_por_codigo[codigo].consultor
             })
-            filtro_consultor = st.selectbox("Consultor", ["Todos"] + consultores_distintos)
+            supervisoras_distintas = sorted({
+                mapa_lojas_api_por_codigo[codigo].supervisora
+                for codigo in codigos_com_dados
+                if codigo in mapa_lojas_api_por_codigo and mapa_lojas_api_por_codigo[codigo].supervisora
+            })
+
+            c_filtro_codigo, c_filtro_consultor, c_filtro_supervisora = st.columns(3)
+            with c_filtro_codigo:
+                filtro_codigo = st.selectbox("Código da loja", ["Todos"] + codigos_com_dados)
+            with c_filtro_consultor:
+                filtro_consultor = st.selectbox("Consultor", ["Todos"] + consultores_distintos)
+            with c_filtro_supervisora:
+                filtro_supervisora = st.selectbox("Supervisora", ["Todos"] + supervisoras_distintas)
+
+            def _loja_bate_filtros(loja_codigo: str) -> bool:
+                """Uma loja só aparece se bater com TODOS os filtros
+                preenchidos (Todos = filtro não aplicado). Consultor e
+                Supervisora exigem que a loja tenha correspondência na API
+                — sem ela (erro_lojas_api_filtro, ou loja ausente na
+                resposta), esses dois filtros simplesmente não encontram
+                nada, o que é o comportamento correto (dado indisponível
+                não deveria "passar" um filtro que o usuário pediu)."""
+                if filtro_codigo != "Todos" and loja_codigo != filtro_codigo:
+                    return False
+                loja_api = mapa_lojas_api_por_codigo.get(loja_codigo)
+                if filtro_consultor != "Todos" and (loja_api is None or loja_api.consultor != filtro_consultor):
+                    return False
+                if filtro_supervisora != "Todos" and (loja_api is None or loja_api.supervisora != filtro_supervisora):
+                    return False
+                return True
 
             lojas_visiveis = sorted(
-                loja_codigo
-                for loja_codigo, ciclos in inventario_atual.items()
-                if filtro_consultor == "Todos"
-                or any((c.get("metadata") or {}).get("consultor") == filtro_consultor for c in ciclos.values())
+                loja_codigo for loja_codigo in inventario_atual if _loja_bate_filtros(loja_codigo)
             )
 
             if not lojas_visiveis:
-                st.info(f"Nenhuma loja encontrada para o consultor {filtro_consultor}.")
+                st.info("Nenhuma loja encontrada para os filtros selecionados.")
             else:
                 with st.container(border=True):
                     st.markdown('<span class="mdf-painel-marker"></span>', unsafe_allow_html=True)
@@ -507,7 +807,22 @@ elif pagina_atual == "Selecionar Loja":
                             with st.container():
                                 st.markdown('<span class="mdf-botao-discreto-marker"></span>', unsafe_allow_html=True)
                                 if st.button("Ir para Upload", key="ir_upload_novo_mes", width="stretch"):
-                                    st.session_state["upload_loja"] = loja_em_foco
+                                    # Pré-preenche o campo Loja (searchbox)
+                                    # da página Upload — ver
+                                    # "_upload_loja_prefill" ali, que lê e
+                                    # descarta este valor para inicializar
+                                    # o st_searchbox já com esta loja
+                                    # selecionada. Mês NÃO é pré-definido
+                                    # aqui de propósito — é sempre um mês
+                                    # novo, então o envio usa o mês/ano
+                                    # atual (comportamento padrão da
+                                    # página Upload). Limpa qualquer
+                                    # contexto de mês que tenha sobrado de
+                                    # uma visita anterior via o botão
+                                    # "Upload" de um cartão existente.
+                                    st.session_state["_upload_loja_prefill"] = loja_em_foco
+                                    st.session_state["_upload_ano_mes_contexto"] = None
+                                    st.session_state["_upload_ano_mes_contexto_loja"] = None
                                     st.session_state["_pagina_solicitada"] = "Upload"
                                     st.rerun()
                     else:
@@ -522,12 +837,32 @@ elif pagina_atual == "Selecionar Loja":
                                     st.markdown(f'<p class="mdf-check-ok">{styles.icone_check_svg()} {rotulo}</p>', unsafe_allow_html=True)
                                 else:
                                     st.markdown(f'<p class="mdf-check-falta">{styles.icone_x_svg()} {rotulo}</p>', unsafe_allow_html=True)
-                            if st.button("Abrir", key=f"abrir_{loja_em_foco}_{mes}", type="primary", width="stretch"):
+                            if st.button("Ir para análise", key=f"analise_{loja_em_foco}_{mes}", type="primary", width="stretch"):
                                 st.session_state["loja_atual_analise"] = loja_em_foco
                                 st.session_state["ciclo_atual_analise"] = f"{loja_em_foco}/{mes}"
                                 st.session_state["metadata_atual_analise"] = info_ciclo["metadata"]
                                 st.session_state["_pagina_solicitada"] = "Análise"
                                 st.rerun()
+                            with st.container():
+                                st.markdown('<span class="mdf-botao-discreto-marker"></span>', unsafe_allow_html=True)
+                                if st.button("Upload", key=f"upload_ciclo_{loja_em_foco}_{mes}", width="stretch"):
+                                    # Reaproveita a página Upload de
+                                    # sempre — pré-preenche Loja E define
+                                    # um CONTEXTO de mês fixo (o deste
+                                    # cartão, não necessariamente o atual),
+                                    # pra completar exatamente este ciclo.
+                                    # Ver _upload_ano_mes_contexto no
+                                    # início da página Upload: enquanto
+                                    # ele estiver definido, o envio grava
+                                    # nesse mês (em vez do atual) e cada
+                                    # campo de arquivo mostra se já tem
+                                    # dado ou está faltando — mesma
+                                    # informação do checklist acima.
+                                    st.session_state["_upload_loja_prefill"] = loja_em_foco
+                                    st.session_state["_upload_ano_mes_contexto"] = mes
+                                    st.session_state["_upload_ano_mes_contexto_loja"] = loja_em_foco
+                                    st.session_state["_pagina_solicitada"] = "Upload"
+                                    st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -564,7 +899,8 @@ elif pagina_atual == "Análise":
             erro_dados = (
                 f"Arquivo obrigatório **{e.chave}** não encontrado em `{e.pasta}`. "
                 f"Sem esse arquivo, esta loja não pode ser processada — envie o arquivo "
-                f"correspondente na página Upload e clique em Atualizar."
+                f"correspondente na página Upload e volte para Análise (os dados são "
+                f"atualizados automaticamente)."
             )
         except dl.MultiplasLojasEstoqueError as e:
             erro_dados = (
