@@ -228,13 +228,22 @@ def aplicar_estilo() -> None:
             border-color: {config.COR_NAVY} !important;
             box-shadow: none !important;
         }}
-        /* O wrapper do BaseWeb (div pai do <input>) tem sua própria borda/
-        fundo por baixo do input — sem zerá-los, uma borda dupla ou um
-        fundo cinza residual apareceria por trás do que definimos acima. */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-campo-consultor-marker) [data-testid="stTextInput"] [data-baseweb="input"] {{
+        /* O wrapper nativo do input (div pai do <input>) tem sua própria
+        borda/fundo/altura por baixo do input — sem zerá-los e igualar a
+        altura, sobra uma borda cinza-clara e um fundo cinza residual
+        alguns pixels menores que o input por trás do que definimos acima
+        (visível como um "halo"/degrau nos cantos). Selector correto pra
+        esse wrapper é [data-testid="stTextInputRootElement"] — o nome
+        mudou numa atualização do Streamlit (a versão anterior usava
+        [data-baseweb="input"], que não existe mais no DOM atual; a regra
+        antiga nunca chegava a aplicar por isso). */
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-campo-consultor-marker) [data-testid="stTextInput"] [data-testid="stTextInputRootElement"] {{
             border: none !important;
             background: transparent !important;
             box-shadow: none !important;
+            height: {config.ALTURA_CAMPO_LOJA_CONSULTOR_PX}px !important;
+            padding: 0 !important;
+            box-sizing: border-box !important;
         }}
 
         /* ---- Rótulo "Loja" desenhado por fora do streamlit-searchbox ----
@@ -271,9 +280,17 @@ def aplicar_estilo() -> None:
         main.js do streamlit-searchbox) e cancela esse espaçamento padrão
         com uma margem negativa do mesmo tamanho, deixando o
         margin-bottom do rótulo acima como a ÚNICA fonte de espaço entre
-        rótulo e caixa — igual ao widget nativo. */
+        rótulo e caixa — igual ao widget nativo.
+
+        Na prática, o navegador colapsa a margin-bottom do rótulo (4px)
+        junto com essa margem negativa em vez de somar as duas — cancelar
+        o 1rem inteiro (-16px) zerava o espaço por completo, colando a
+        caixa direto embaixo do texto "Loja" (medido: 0px de vão, contra
+        4px do lado do Consultor). -12px é o valor que sobra exatamente os
+        4px do margin-bottom do rótulo, medido lado a lado com o Consultor
+        via automação de navegador (ver conversa) — não é um chute. */
         div[data-testid="stElementContainer"]:has(iframe[title="streamlit_searchbox.searchbox"]) {{
-            margin-top: -1rem !important;
+            margin-top: -12px !important;
         }}
 
         /* ---- Mesmo problema do bloco acima, só que do lado do Consultor ----
@@ -437,7 +454,7 @@ def aplicar_estilo() -> None:
             border: 1px solid #E4E7EB !important;
             background: #FFFFFF;
             padding: 16px 18px !important;
-            min-height: 130px;
+            min-height: 145px;
             box-sizing: border-box;
         }}
         .mdf-stat-label {{
