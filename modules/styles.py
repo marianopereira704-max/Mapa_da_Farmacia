@@ -453,7 +453,7 @@ def aplicar_estilo() -> None:
             border-radius: 14px !important;
             border: 1px solid #E4E7EB !important;
             background: #FFFFFF;
-            padding: 16px 18px !important;
+            padding: 8px 12px !important;
             min-height: 145px;
             box-sizing: border-box;
         }}
@@ -473,14 +473,14 @@ def aplicar_estilo() -> None:
             border-radius: 14px !important;
             border: 1px solid #E4E7EB !important;
             background: #FFFFFF;
-            padding: 16px 20px !important;
+            padding: 8px 12px !important;
         }}
         div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-alerta-card-marker) {{
             border-radius: 14px !important;
             border: 1px solid #E4E7EB !important;
             border-left: 3px solid {config.COR_AMBAR_TEXTO} !important;
             background: #FFFFFF;
-            padding: 16px 20px !important;
+            padding: 8px 12px !important;
         }}
         .mdf-rank-badge {{
             width: 24px; height: 24px; border-radius: 50%;
