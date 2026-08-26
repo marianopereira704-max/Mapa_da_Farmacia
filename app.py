@@ -142,6 +142,42 @@ def _carregar_imagem_conferencia(_storage, caminho_ciclo: str, chave: str, versa
     return arq.conteudo, mime, None
 
 
+@st.cache_data(ttl=600, show_spinner="Carregando resultado da ação...")
+def _carregar_dados_resultado_acao(_storage, caminho_ciclo: str, versao_cache: int) -> dict:
+    """Carrega os dados necessários para a feature Resultado da ação (Aba
+    3 — Conferência). Só monta os DataFrames quando os DOIS arquivos
+    "depois" (Retrato de Vendas + Estoque atualizado) já foram enviados —
+    sem o Estoque atualizado não dá pra diferenciar "deixou de vender" de
+    "sem venda no período" com confiança (ver data_loader.montar_tabela_
+    resultado_acao), então a feature não é exibida parcialmente.
+
+    Retorna um dict:
+      "retrato_presente" / "estoque_atualizado_presente": bool — pra UI
+        avisar especificamente qual arquivo falta, se algum faltar (não é
+        erro, é um estado esperado até o consultor enviar).
+      "retrato_df" / "estoque_resultado_df" / "estoque_atualizado_df":
+        None enquanto algum dos dois não foi enviado.
+    """
+    arq_retrato = localizar_arquivo(_storage, caminho_ciclo, config.FILE_SPECS["retrato_vendas"], "retrato_vendas")
+    arq_estoque_atualizado = localizar_arquivo(
+        _storage, caminho_ciclo, config.FILE_SPECS["estoque_atualizado"], "estoque_atualizado"
+    )
+
+    dados = {
+        "retrato_presente": arq_retrato is not None,
+        "estoque_atualizado_presente": arq_estoque_atualizado is not None,
+        "retrato_df": None,
+        "estoque_resultado_df": None,
+        "estoque_atualizado_df": None,
+    }
+    if arq_retrato is not None and arq_estoque_atualizado is not None:
+        arq_estoque = localizar_arquivo(_storage, caminho_ciclo, config.FILE_SPECS["estoque"], "estoque")
+        dados["retrato_df"] = dl.carregar_retrato_vendas(io.BytesIO(arq_retrato.conteudo))
+        dados["estoque_resultado_df"] = dl.carregar_estoque_resultado(io.BytesIO(arq_estoque.conteudo))
+        dados["estoque_atualizado_df"] = dl.carregar_estoque(io.BytesIO(arq_estoque_atualizado.conteudo))
+    return dados
+
+
 @st.cache_data(show_spinner="Gerando PDF...")
 def _gerar_pdf_gc_cache(tabela_gc: pd.DataFrame, consultor: str, loja: str, subtitulo: str) -> bytes:
     """Cacheado pelo conteúdo da tabela — evita regerar o PDF (custa
@@ -152,14 +188,167 @@ def _gerar_pdf_gc_cache(tabela_gc: pd.DataFrame, consultor: str, loja: str, subt
 
 
 # ---------------------------------------------------------------------------
+# Resultado da ação (Aba 3 — Conferência) — renderização
+# ---------------------------------------------------------------------------
+
+def _par_texto(antes, depois, status: str, formatador) -> str:
+    """Formata o par "antes → depois" de uma linha da lista produto a
+    produto. Casos especiais: "sem_dado" (EAN não localizado, não há
+    nenhum dos dois) e "novo" (não existia "antes") mostram travessão do
+    lado que não se aplica, em vez de um "0" que pareceria dado real."""
+    texto_antes = "—" if status in ("sem_dado", "novo") else formatador(antes)
+    texto_depois = "—" if status == "sem_dado" else formatador(depois)
+    return f'<span class="antes">{texto_antes}</span><span class="seta">→</span>{texto_depois}'
+
+
+def _renderizar_resultado_acao(tabela: pd.DataFrame, mes_antes_legivel: str, mes_depois_legivel: str) -> None:
+    """Renderiza o dashboard completo do Resultado da ação — chamado só
+    depois que a UI (aba_conf) já confirmou que há ajuste de mix salvo e
+    que os dois arquivos "depois" (Retrato de Vendas + Estoque
+    atualizado) foram enviados."""
+    st.markdown(
+        f'<p class="mdf-comparativo-legenda">Comparativo: '
+        f'<b>{mes_antes_legivel}</b> vs <b>{mes_depois_legivel}</b>.</p>',
+        unsafe_allow_html=True,
+    )
+
+    total_antes = float(tabela["faturamento_antes"].sum())
+    total_depois = float(tabela["faturamento_depois"].sum())
+    crescimento_total_rs = total_depois - total_antes
+    crescimento_total_pct = (crescimento_total_rs / total_antes * 100) if total_antes > 0 else None
+
+    c_stat1, c_stat2, c_stat3 = st.columns(3, gap="medium")
+    with c_stat1:
+        classe_valor = "mdf-stat-valor mdf-stat-valor-positivo" if crescimento_total_rs >= 0 else "mdf-stat-valor"
+        sinal = "+" if crescimento_total_rs >= 0 else ""
+        styles.cartao_stat(
+            "Crescimento em R$",
+            f'<p class="{classe_valor}">{sinal}{styles.formatar_rs(crescimento_total_rs)}</p>',
+            f"{styles.formatar_rs(total_antes)} → {styles.formatar_rs(total_depois)} (mensal)",
+        )
+    with c_stat2:
+        if crescimento_total_pct is None:
+            valor_pct_html = '<p class="mdf-stat-valor">—</p>'
+            sub_pct = "sem base de faturamento \"antes\" para calcular %"
+        else:
+            classe_valor = "mdf-stat-valor mdf-stat-valor-positivo" if crescimento_total_pct >= 0 else "mdf-stat-valor"
+            sinal = "+" if crescimento_total_pct >= 0 else ""
+            valor_pct_html = f'<p class="{classe_valor}">{sinal}{crescimento_total_pct:.1f}%</p>'
+            sub_pct = "sobre o faturamento mensal do mix acompanhado"
+        styles.cartao_stat("Crescimento em %", valor_pct_html, sub_pct)
+    with c_stat3:
+        styles.cartao_stat(
+            "Faturamento mensal",
+            f'<p class="mdf-stat-valor">{styles.formatar_rs(total_depois)}</p>',
+            f"Antes: {styles.formatar_rs(total_antes)}",
+        )
+
+    st.markdown("&nbsp;", unsafe_allow_html=True)
+
+    # ---- Top 3 produtos que mais cresceram (em R$) ----
+    top3 = tabela[tabela["crescimento_rs"] > 0].sort_values("crescimento_rs", ascending=False).head(3)
+    if len(top3) > 0:
+        with st.container():
+            st.markdown('<span class="mdf-top3-card-marker"></span>', unsafe_allow_html=True)
+            st.markdown('<p class="mdf-foto-titulo">Top 3 produtos que mais cresceram (em R$)</p>', unsafe_allow_html=True)
+            for posicao, (_, row) in enumerate(top3.iterrows(), start=1):
+                badge_html = styles.badge_inline_status_resultado(row["status"])
+                meta = f'{int(row["unidades_antes"])} → {int(row["unidades_depois"])} un./mês'
+                if row["crescimento_pct"] is not None and pd.notna(row["crescimento_pct"]):
+                    meta += f' · +{row["crescimento_pct"]:.0f}%'
+                c1, c2, c3 = st.columns([0.08, 0.72, 0.20])
+                with c1:
+                    st.markdown(f'<div class="mdf-rank-badge">{posicao}</div>', unsafe_allow_html=True)
+                with c2:
+                    st.markdown(f'<p class="mdf-produto-nome">{row["produto"]}{badge_html}</p>', unsafe_allow_html=True)
+                    st.markdown(f'<p class="mdf-produto-meta">{meta}</p>', unsafe_allow_html=True)
+                with c3:
+                    st.markdown(styles.chip_crescimento_rs(row["crescimento_rs"]), unsafe_allow_html=True)
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+
+    # ---- Produtos que deixaram de vender ----
+    deixaram = tabela[tabela["status"] == "deixou_de_vender"].sort_values("faturamento_antes", ascending=False)
+    if len(deixaram) > 0:
+        with st.container():
+            st.markdown('<span class="mdf-alerta-card-marker"></span>', unsafe_allow_html=True)
+            st.markdown(
+                '<p class="mdf-foto-titulo"><span class="mdf-icone-alerta">⚠</span> Produtos que deixaram de vender</p>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f'<p class="mdf-stat-sub">Estavam no estoque em {mes_antes_legivel}, não tiveram venda em '
+                f'{mes_depois_legivel} e o Estoque atualizado confirma que saíram do mix '
+                '(estoque zerado ou item não encontrado).</p>',
+                unsafe_allow_html=True,
+            )
+            st.markdown('<div style="height: 14px;"></div>', unsafe_allow_html=True)
+            for _, row in deixaram.iterrows():
+                c1, c2 = st.columns([0.78, 0.22])
+                with c1:
+                    st.markdown(f'<p class="mdf-produto-nome">{row["produto"]}</p>', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<p class="mdf-produto-meta">EAN {row["ean_original"]} · vendia '
+                        f'{int(row["unidades_antes"])} un./mês · {styles.formatar_rs(row["faturamento_antes"])}/mês</p>',
+                        unsafe_allow_html=True,
+                    )
+                with c2:
+                    st.markdown(styles.chip_variacao_produto("deixou_de_vender", None, None), unsafe_allow_html=True)
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+
+    # ---- Produto a produto ----
+    st.markdown('<p class="mdf-lista-titulo">Produto a produto</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="mdf-stat-sub">Produtos do ajuste de mix da loja, na mesma ordem de gôndola — '
+        'mesmo padrão já usado na Sugestão de GC.</p>',
+        unsafe_allow_html=True,
+    )
+    produtos_nao_encontrados = tabela.attrs.get("produtos_nao_encontrados", [])
+    if produtos_nao_encontrados:
+        with st.expander(f"⚠️ {len(produtos_nao_encontrados)} produto(s) do ajuste de mix não encontrado(s) no Mapa da Farmácia atual"):
+            st.caption("Esses produtos foram salvos no ajuste de mix, mas o Mapa da Farmácia atual não os contém mais.")
+            for item in produtos_nao_encontrados:
+                st.markdown(f"- EAN cadastrado: `{item['ean_original']}` — quantidade salva: {item['quantidade']}")
+
+    with st.container(border=True):
+        st.markdown('<span class="mdf-painel-marker"></span>', unsafe_allow_html=True)
+        for _, row in tabela.iterrows():
+            with st.container():
+                st.markdown('<span class="mdf-row-marker"></span>', unsafe_allow_html=True)
+                c1, c2, c3 = st.columns([0.4, 0.22, 0.22])
+                badge_html = styles.badge_inline_status_resultado(row["status"])
+                with c1:
+                    st.markdown(f'<p class="mdf-produto-nome">{row["produto"]}{badge_html}</p>', unsafe_allow_html=True)
+                    ean_label = "EAN não localizado" if row["status"] == "sem_dado" else row["ean_original"]
+                    st.markdown(f'<p class="mdf-produto-meta">{ean_label}</p>', unsafe_allow_html=True)
+                with c2:
+                    texto_unidades = _par_texto(row["unidades_antes"], row["unidades_depois"], row["status"], lambda v: f"{int(v)}")
+                    st.markdown(f'<p class="mdf-par-compacto">{texto_unidades}</p>', unsafe_allow_html=True)
+                with c3:
+                    texto_valor = _par_texto(row["faturamento_antes"], row["faturamento_depois"], row["status"], styles.formatar_rs)
+                    st.markdown(f'<p class="mdf-par-compacto">{texto_valor}</p>', unsafe_allow_html=True)
+                    st.markdown(
+                        styles.chip_variacao_produto(row["status"], row["crescimento_rs"], row["crescimento_pct"]),
+                        unsafe_allow_html=True,
+                    )
+
+
+# ---------------------------------------------------------------------------
 # metadata.json de um ciclo (loja/mês) — quem enviou por último, e quando.
 # ---------------------------------------------------------------------------
 
-def _atualizar_metadata_ciclo(storage, loja: str, ano_mes: str, consultor: str) -> None:
+def _atualizar_metadata_ciclo(
+    storage, loja: str, ano_mes: str, consultor: str, retrato_vendas_enviado: bool = False
+) -> None:
     """Cria ou atualiza (mesclando com o que já existir) o metadata.json
     do ciclo {loja}/{ano_mes}. Só sobrescreve o campo 'consultor' se um
     valor não-vazio foi informado neste envio — um envio sem consultor
-    preenchido não apaga o consultor registrado por um envio anterior."""
+    preenchido não apaga o consultor registrado por um envio anterior.
+
+    Quando `retrato_vendas_enviado` é True, carimba também o mês/ano
+    ATUAL (não o do ciclo) em 'retrato_vendas_ano_mes' — é esse carimbo
+    que a feature Resultado da ação (Aba 3) usa para saber automaticamente
+    qual foi o mês "depois" do comparativo, sem o consultor precisar
+    informar nada (ver aba_conf)."""
     caminho = f"{loja}/{ano_mes}/{inventario.NOME_ARQUIVO_METADATA}"
     metadata_atual = {}
     try:
@@ -170,20 +359,27 @@ def _atualizar_metadata_ciclo(storage, loja: str, ano_mes: str, consultor: str) 
     if consultor:
         metadata_atual["consultor"] = consultor
     metadata_atual["enviado_em"] = datetime.now().isoformat(timespec="seconds")
+    if retrato_vendas_enviado:
+        metadata_atual["retrato_vendas_ano_mes"] = date.today().strftime("%Y-%m")
 
     conteudo = json.dumps(metadata_atual, ensure_ascii=False, indent=2).encode("utf-8")
     storage.escrever_arquivo_bytes(caminho, conteudo)
 
 
-# Rótulos de exibição dos 5 tipos de arquivo por loja, na mesma ordem em
-# que aparecem tanto no formulário de Upload quanto no checklist dos
-# cartões de ciclo (página Selecionar Loja, Nível 2).
+# Rótulos de exibição dos tipos de arquivo por loja, na mesma ordem em que
+# aparecem tanto no formulário de Upload quanto no checklist dos cartões
+# de ciclo (página Selecionar Loja, Nível 2). "retrato_vendas" e
+# "estoque_atualizado" só aparecem no formulário de Upload quando o ciclo
+# já tem ajuste_mix.json salvo (ver grid dinâmico mais abaixo) — mas
+# continuam SEMPRE no checklist do cartão de ciclo, igual aos demais.
 _ROTULOS_ARQUIVOS_UPLOAD = {
     "mapa_farmacia": "Mapa da Farmácia",
     "estoque": "Estoque",
     "modelo": "Modelo (planograma)",
     "foto_antes": "Foto Antes",
     "foto_depois": "Foto Depois",
+    "retrato_vendas": "Retrato de Vendas",
+    "estoque_atualizado": "Estoque atualizado",
 }
 
 # CSS-in-JS aplicado ao componente React do campo Loja (streamlit-
@@ -507,15 +703,29 @@ if pagina_atual == "Upload":
         ano_mes_contexto = st.session_state.get("_upload_ano_mes_contexto")
         loja_contexto = st.session_state.get("_upload_ano_mes_contexto_loja")
         arquivos_existentes_contexto = None
+        ajuste_mix_existe_contexto = False
         if ano_mes_contexto and loja_contexto:
             inventario_contexto = _descobrir_inventario_cache(storage, st.session_state["versao_cache"])
             ciclo_contexto = inventario_contexto.get(loja_contexto, {}).get(ano_mes_contexto)
             if ciclo_contexto:
                 arquivos_existentes_contexto = ciclo_contexto.get("arquivos", {})
+                # "Retrato de Vendas" e "Estoque atualizado" (Resultado da
+                # ação) só fazem sentido depois que o consultor já salvou
+                # o ajuste de mix daquele ciclo — sem isso não há lista de
+                # produtos pra comparar. ajuste_mix não entra no
+                # inventário rápido (ver inventario.py), então checamos
+                # direto aqui, só nesse contexto específico (1 chamada
+                # extra, não em toda renderização da página).
+                ajuste_mix_existe_contexto = (
+                    dl.carregar_ajuste_mix_salvo(storage, f"{loja_contexto}/{ano_mes_contexto}") is not None
+                )
 
-        chaves_arquivos = list(_ROTULOS_ARQUIVOS_UPLOAD)
+        chaves_arquivos = [
+            chave for chave in _ROTULOS_ARQUIVOS_UPLOAD
+            if chave not in ("retrato_vendas", "estoque_atualizado") or ajuste_mix_existe_contexto
+        ]
         col_esq, col_dir = st.columns(2)
-        colunas_alternadas = [col_esq, col_dir, col_esq, col_dir, col_esq]
+        colunas_alternadas = [col_esq if i % 2 == 0 else col_dir for i in range(len(chaves_arquivos))]
         arquivos_selecionados = {}
         for chave, coluna in zip(chaves_arquivos, colunas_alternadas):
             with coluna:
@@ -579,8 +789,15 @@ if pagina_atual == "Upload":
                         falhas.append(f"{_ROTULOS_ARQUIVOS_UPLOAD[chave]}: {e}")
 
                 if enviados_ok:
+                    retrato_enviado_agora = any(
+                        chave == "retrato_vendas" and info["caminho"] in enviados_ok
+                        for chave, info in sem_conflito.items()
+                    )
                     try:
-                        _atualizar_metadata_ciclo(storage, loja_limpa, ano_mes, upload_consultor.strip())
+                        _atualizar_metadata_ciclo(
+                            storage, loja_limpa, ano_mes, upload_consultor.strip(),
+                            retrato_vendas_enviado=retrato_enviado_agora,
+                        )
                     except StorageError as e:
                         falhas.append(f"metadata.json: {e}")
 
@@ -614,6 +831,7 @@ if pagina_atual == "Upload":
                     _atualizar_metadata_ciclo(
                         storage, loja_pend, ano_mes_pend,
                         st.session_state.get("_upload_consultor_pendente", ""),
+                        retrato_vendas_enviado=(chave == "retrato_vendas"),
                     )
                     st.toast(f"{_ROTULOS_ARQUIVOS_UPLOAD[chave]} substituído.", icon="✅")
                 except StorageError as e:
@@ -632,15 +850,17 @@ if pagina_atual == "Upload":
     with st.expander("Base nacional de demanda", expanded=False):
         st.caption(
             "Base compartilhada de demanda de mercado, usada por todas as lojas "
-            "(diferente da seção acima, que é por loja). Normalmente passa por "
-            "um pré-processamento local antes do envio (ver "
-            "scripts/preparar_base_nacional.py no README), gerando a versão "
-            "'.parquet' — mais rápida de carregar. Enviar a planilha '.xlsx' "
-            "bruta também funciona, como alternativa mais lenta."
+            "(diferente da seção acima, que é por loja). Enviar a planilha bruta "
+            "('.xlsx'/'.xls', como ela sai do sistema de origem) já converte "
+            "automaticamente para '.parquet' — formato bem mais rápido de "
+            "carregar — aplicando os mesmos filtros de "
+            "scripts/preparar_base_nacional.py (remove categorias RX_ e "
+            "produtos de baixa demanda, ver README). Enviar um '.parquet' já "
+            "pronto (gerado localmente) também funciona, sem reprocessar."
         )
         arquivo_base_nacional = st.file_uploader(
-            "Arquivo da base nacional (.xlsx ou .parquet)",
-            type=["xlsx", "parquet"],
+            "Arquivo da base nacional (.xlsx, .xls ou .parquet)",
+            type=["xlsx", "xls", "parquet"],
             key="upload_base_nacional",
         )
         if st.button("Enviar base nacional", type="primary", key="upload_botao_base"):
@@ -649,10 +869,34 @@ if pagina_atual == "Upload":
             else:
                 extensao = Path(arquivo_base_nacional.name).suffix.lower()
                 nome_base = config.BASE_NACIONAL_SPEC["basenames"][0]
-                caminho_destino = f"{config.BASE_NACIONAL_FOLDER_NAME}/{nome_base}{extensao}"
                 try:
-                    storage.escrever_arquivo_bytes(caminho_destino, arquivo_base_nacional.getvalue())
-                    st.success(f"Base nacional enviada com sucesso: `{caminho_destino}`")
+                    if extensao == ".parquet":
+                        caminho_destino = f"{config.BASE_NACIONAL_FOLDER_NAME}/{nome_base}.parquet"
+                        storage.escrever_arquivo_bytes(caminho_destino, arquivo_base_nacional.getvalue())
+                        st.toast(f"Base nacional enviada: `{caminho_destino}`", icon="✅")
+                    else:
+                        # Arquivo bruto (.xlsx/.xls) -- converte automaticamente
+                        # antes de salvar, em vez de subir do jeito que veio (o
+                        # app sempre lê essa versão bruta pelo caminho lento,
+                        # ver modules.data_loader.carregar_base_nacional).
+                        bruta = dl.carregar_base_nacional_bruta(
+                            io.BytesIO(arquivo_base_nacional.getvalue())
+                        )
+                        tratada, resumo = dl.tratar_base_nacional(bruta)
+                        buffer_parquet = io.BytesIO()
+                        tratada.to_parquet(buffer_parquet, index=False)
+                        caminho_destino = f"{config.BASE_NACIONAL_FOLDER_NAME}/{nome_base}.parquet"
+                        storage.escrever_arquivo_bytes(caminho_destino, buffer_parquet.getvalue())
+                        st.toast(
+                            f"Base nacional convertida e enviada: "
+                            f"{resumo.total_original:,} → {resumo.total_final:,} produtos "
+                            f"({resumo.removidos_categoria:,} por categoria, "
+                            f"{resumo.removidos_demanda:,} por demanda baixa)."
+                            .replace(",", "."),
+                            icon="✅",
+                        )
+                except dl.PlanilhaInvalidaError as e:
+                    st.error(f"Não foi possível processar o arquivo: {e}")
                 except StorageError as e:
                     st.error(f"Falha ao enviar: {e}")
 
@@ -1161,3 +1405,66 @@ elif pagina_atual == "Análise":
                 styles.cartao_foto("Modelo", imagem_modelo, mime_modelo, msg_modelo)
             with c_depois:
                 styles.cartao_foto("Depois", imagem_depois, mime_depois, msg_depois)
+
+            # ---- Resultado da ação ----
+            # Só existe a partir do momento em que há um ajuste de mix
+            # salvo (é a lista base dela — ver montar_tabela_resultado_
+            # acao) — carregado de novo aqui, independente da aba_gc, pra
+            # esta seção funcionar mesmo que a Sugestão de GC não tenha
+            # sido aberta nesta mesma execução (abas do Streamlit não
+            # compartilham escopo de execução entre si de forma confiável
+            # quando há erro em outra aba).
+            ajuste_salvo_conf = dl.carregar_ajuste_mix_salvo(storage, ciclo_selecionado)
+            if ajuste_salvo_conf and ajuste_salvo_conf.get("produtos"):
+                st.markdown("&nbsp;", unsafe_allow_html=True)
+                st.markdown('<p class="mdf-secao-titulo">Resultado da ação</p>', unsafe_allow_html=True)
+
+                if mapa_df is None:
+                    st.error(erro_dados or "Não foi possível carregar o Mapa da Farmácia para calcular o resultado da ação.")
+                else:
+                    erro_resultado = None
+                    dados_resultado = None
+                    try:
+                        dados_resultado = _carregar_dados_resultado_acao(
+                            storage, ciclo_selecionado, st.session_state["versao_cache"]
+                        )
+                    except dl.PlanilhaInvalidaError as e:
+                        erro_resultado = (
+                            f"Não foi possível interpretar o Retrato de Vendas ou o Estoque "
+                            f"atualizado: {e}"
+                        )
+                    except dl.MultiplasLojasEstoqueError as e:
+                        erro_resultado = (
+                            f"O Estoque atualizado contém mais de uma loja: "
+                            f"{', '.join(e.ids_encontrados)}."
+                        )
+
+                    if erro_resultado:
+                        st.error(erro_resultado)
+                    elif not dados_resultado["retrato_presente"] or not dados_resultado["estoque_atualizado_presente"]:
+                        faltando = []
+                        if not dados_resultado["retrato_presente"]:
+                            faltando.append("**Retrato de Vendas**")
+                        if not dados_resultado["estoque_atualizado_presente"]:
+                            faltando.append("**Estoque atualizado**")
+                        st.info(
+                            f"Envie {' e '.join(faltando)} na página Upload (pelo botão \"Upload\" "
+                            f"deste ciclo, em Selecionar Loja) para ver o resultado da ação aqui."
+                        )
+                    else:
+                        tabela_resultado = dl.montar_tabela_resultado_acao(
+                            mapa_df,
+                            ajuste_salvo_conf,
+                            dados_resultado["estoque_resultado_df"],
+                            dados_resultado["retrato_df"],
+                            dados_resultado["estoque_atualizado_df"],
+                        )
+                        mes_antes_legivel = styles.mes_legivel(ciclo_selecionado.split("/")[-1])
+                        # "retrato_vendas_ano_mes" é carimbado automaticamente no
+                        # metadata.json no momento do upload (ver
+                        # _atualizar_metadata_ciclo) — fallback pro mês atual só
+                        # cobre o caso raro de um ciclo antigo, enviado antes
+                        # dessa feature existir, sem o carimbo.
+                        ano_mes_depois = (metadata_ciclo or {}).get("retrato_vendas_ano_mes") or date.today().strftime("%Y-%m")
+                        mes_depois_legivel = styles.mes_legivel(ano_mes_depois)
+                        _renderizar_resultado_acao(tabela_resultado, mes_antes_legivel, mes_depois_legivel)

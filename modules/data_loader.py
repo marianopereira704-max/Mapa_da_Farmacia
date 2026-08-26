@@ -318,6 +318,60 @@ def carregar_base_nacional_bruta(caminho_arquivo: str) -> pd.DataFrame:
     return resultado
 
 
+@dataclass
+class ResumoTratamentoBaseNacional:
+    """Contagens de cada etapa do filtro aplicado por tratar_base_nacional()
+    — usado tanto pelo script de linha de comando quanto pelo upload no
+    app, pra mostrar pro usuário quantos produtos entraram/saíram."""
+    total_original: int
+    removidos_categoria: int
+    removidos_demanda: int
+    total_final: int
+
+
+def tratar_base_nacional(bruta: pd.DataFrame) -> tuple[pd.DataFrame, ResumoTratamentoBaseNacional]:
+    """Aplica os dois filtros de pré-processamento da base nacional de
+    demanda sobre o DataFrame bruto devolvido por
+    carregar_base_nacional_bruta(): remove categorias fora do escopo de
+    salão de loja (RX_* — tarja/balcão, config.PREFIXOS_CATEGORIA_EXCLUIDOS)
+    e remove produtos com demanda abaixo do mínimo configurado
+    (config.DEMANDA_MINIMA_BASE_NACIONAL).
+
+    Único ponto onde essa regra de negócio existe — tanto
+    scripts/preparar_base_nacional.py (rodado localmente, fora do app)
+    quanto o formulário de upload da base nacional em app.py (conversão
+    automática ao subir um arquivo bruto) chamam esta mesma função, cada
+    um decidindo como mostrar o resumo pro usuário.
+
+    Retorna o DataFrame já reduzido a (ean, demanda) — pronto para salvar
+    como .parquet — e um resumo com as contagens de cada etapa.
+    """
+    total_original = len(bruta)
+    tratada = bruta.copy()
+
+    removidos_categoria = 0
+    if tratada["categoria"].notna().any() and config.PREFIXOS_CATEGORIA_EXCLUIDOS:
+        mascara_excluida = tratada["categoria"].fillna("").str.startswith(
+            tuple(config.PREFIXOS_CATEGORIA_EXCLUIDOS)
+        )
+        removidos_categoria = int(mascara_excluida.sum())
+        tratada = tratada[~mascara_excluida].copy()
+
+    mascara_baixa_demanda = tratada["demanda"] < config.DEMANDA_MINIMA_BASE_NACIONAL
+    removidos_demanda = int(mascara_baixa_demanda.sum())
+    tratada = tratada[~mascara_baixa_demanda].copy()
+
+    tratada = tratada[["ean", "demanda"]].reset_index(drop=True)
+
+    resumo = ResumoTratamentoBaseNacional(
+        total_original=total_original,
+        removidos_categoria=removidos_categoria,
+        removidos_demanda=removidos_demanda,
+        total_final=len(tratada),
+    )
+    return tratada, resumo
+
+
 def carregar_base_nacional(fonte, extensao: str | None = None) -> pd.DataFrame:
     """Lê a base nacional de demanda para uso em produção.
 
@@ -365,6 +419,198 @@ def carregar_base_nacional(fonte, extensao: str | None = None) -> pd.DataFrame:
     dados["demanda"] = pd.to_numeric(dados["demanda"], errors="coerce").fillna(0)
 
     return dados
+
+
+# ---------------------------------------------------------------------------
+# Leitura: Retrato de Vendas + Estoque (resultado) — Aba 3, Resultado da ação
+# ---------------------------------------------------------------------------
+
+def carregar_retrato_vendas(caminho_arquivo: str) -> pd.DataFrame:
+    """Lê a planilha "Retrato de Vendas" (export mensal de vendas por
+    produto, usado no comparativo "depois" da feature Resultado da ação).
+
+    IMPORTANTE — esse export já vem FILTRADO na origem para conter só
+    produtos com venda > 0 no período (um dos filtros do dashboard de
+    origem é "VENDAS VLR Liquido não é R$ 0,00", confirmado contra
+    arquivos reais: Quantidade nunca é zero). Um produto ausente aqui
+    significa "não teve venda no mês", não "não existe" — por isso a
+    feature usa um segundo arquivo (Estoque atualizado, ver
+    carregar_estoque em conjunto com montar_tabela_resultado_acao) para
+    diferenciar esse caso de um produto que realmente saiu do mix.
+
+    Retorna DataFrame com colunas: ean, quantidade_vendida, valor_vendido.
+
+    Faz uma validação de integridade contra a linha "Total" que o export
+    inclui no rodapé (se houver): soma a Quantidade e o Valor de todas as
+    linhas de produto lidas e compara com os totais declarados nessa
+    linha — se não baterem (fora de uma tolerância pequena, cobrindo só
+    arredondamento), levanta PlanilhaInvalidaError em vez de seguir com
+    dado potencialmente incompleto.
+    """
+    colunas_cfg = config.COLUNAS_RETRATO_VENDAS
+    bruto = pd.read_excel(caminho_arquivo, header=None, dtype=object)
+
+    linha_cabecalho = _localizar_linha_cabecalho(bruto, list(colunas_cfg.values()))
+    mapa_idx = _mapear_colunas(bruto.iloc[linha_cabecalho], colunas_cfg)
+
+    faltando = [k for k, v in mapa_idx.items() if v is None]
+    if faltando:
+        raise PlanilhaInvalidaError(
+            f"Colunas obrigatórias não encontradas no Retrato de Vendas: {faltando}"
+        )
+
+    dados = bruto.iloc[linha_cabecalho + 1:].copy()
+
+    # Localiza a linha "Total" de rodapé (se existir) ANTES de descartar
+    # lixo — usada só para a validação de integridade abaixo, nunca entra
+    # no resultado final. Varre TODAS as colunas da linha (não só a
+    # esperada) porque a palavra "Total" pode estar em qualquer coluna,
+    # dependendo de como o dashboard de origem monta o export.
+    linha_total = None
+    indice_linha_total = None
+    for idx, linha in dados.iterrows():
+        valores_linha = {str(v).strip().lower() for v in linha.tolist() if v is not None}
+        if "total" in valores_linha:
+            linha_total = linha
+            indice_linha_total = idx
+            break
+
+    # Descarta linhas de rodapé/lixo (o texto de "Filtros aplicados",
+    # linhas em branco) — só é dado de produto válido se a coluna
+    # Quantidade contiver um número (mesmo critério usado em
+    # carregar_estoque). A própria linha Total é excluída aqui também,
+    # explicitamente por índice — ela também tem Quantidade numérica
+    # (sobreviveria ao filtro) e, se não fosse excluída aqui, seria
+    # somada em dobro na validação abaixo (uma vez como "declarado", outra
+    # como parte do "lido").
+    quantidade_numerica = pd.to_numeric(dados.iloc[:, mapa_idx["quantidade"]], errors="coerce")
+    dados = dados[quantidade_numerica.notna()].copy()
+    if indice_linha_total is not None:
+        dados = dados[dados.index != indice_linha_total].copy()
+
+    # Somas de validação tiradas AQUI, sobre TODAS as linhas de produto
+    # (antes do dropna de EAN abaixo) — de propósito. Planilhas reais têm
+    # linhas de produto com EAN ausente/malformado (confirmado em arquivo
+    # real: 3 linhas), que a linha "Total" do rodapé CONTA mas que não
+    # podem ser cruzadas por EAN (e por isso saem do `resultado` final).
+    # Validar aqui, antes desse descarte, garante que a checagem seja
+    # "lemos o arquivo certo", não "toda linha tem EAN" — essa segunda
+    # checagem já existe em outro lugar (o app mostra o produto sem
+    # esconder, só sinaliza "EAN não localizado", mesmo padrão do Mapa da
+    # Farmácia e do Estoque).
+    soma_quantidade_lida = pd.to_numeric(dados.iloc[:, mapa_idx["quantidade"]], errors="coerce").sum()
+    soma_valor_lido = pd.to_numeric(dados.iloc[:, mapa_idx["valor"]], errors="coerce").sum()
+
+    resultado = pd.DataFrame({
+        "ean": dados.iloc[:, mapa_idx["ean"]].apply(normalizar_ean).values,
+        "quantidade_vendida": pd.to_numeric(dados.iloc[:, mapa_idx["quantidade"]], errors="coerce").values,
+        "valor_vendido": pd.to_numeric(dados.iloc[:, mapa_idx["valor"]], errors="coerce").values,
+    })
+    resultado = resultado.dropna(subset=["ean"]).reset_index(drop=True)
+    resultado["valor_vendido"] = resultado["valor_vendido"].fillna(0)
+
+    # Se um mesmo EAN aparecer mais de uma vez, soma (defensivo — mesmo
+    # padrão de carregar_estoque).
+    resultado = resultado.groupby("ean", as_index=False).agg(
+        quantidade_vendida=("quantidade_vendida", "sum"),
+        valor_vendido=("valor_vendido", "sum"),
+    )
+
+    if linha_total is not None:
+        soma_quantidade_declarada = pd.to_numeric(
+            pd.Series([linha_total.iloc[mapa_idx["quantidade"]]]), errors="coerce"
+        ).iloc[0]
+        soma_valor_declarado = pd.to_numeric(
+            pd.Series([linha_total.iloc[mapa_idx["valor"]]]), errors="coerce"
+        ).iloc[0]
+
+        soma_quantidade_real = soma_quantidade_lida
+        soma_valor_real = soma_valor_lido
+
+        diverge_quantidade = (
+            pd.notna(soma_quantidade_declarada)
+            and abs(soma_quantidade_real - soma_quantidade_declarada) > 1
+        )
+        diverge_valor = (
+            pd.notna(soma_valor_declarado)
+            and abs(soma_valor_real - soma_valor_declarado) > max(1.0, 0.005 * abs(soma_valor_declarado))
+        )
+        if diverge_quantidade or diverge_valor:
+            raise PlanilhaInvalidaError(
+                "Os totais lidos do Retrato de Vendas não batem com a linha 'Total' da "
+                f"planilha (Quantidade: {soma_quantidade_real:.0f} lida vs. "
+                f"{soma_quantidade_declarada:.0f} declarada na planilha; Valor: "
+                f"R$ {soma_valor_real:,.2f} lido vs. R$ {soma_valor_declarado:,.2f} "
+                "declarado). A planilha pode estar incompleta ou corrompida — confira o "
+                "arquivo antes de reenviar."
+            )
+
+    return resultado
+
+
+def carregar_estoque_resultado(caminho_arquivo: str) -> pd.DataFrame:
+    """Lê a planilha de Estoque (o MESMO arquivo "antes" já usado no
+    Ajuste de Mix) capturando também as colunas de venda dos últimos 3
+    meses — usadas só pela feature Resultado da ação (Aba 3) para
+    calcular o preço médio e o faturamento mensal "antes" de cada
+    produto. Não substitui carregar_estoque(), que continua minimalista
+    (ean, estoque) para o uso já existente no Ajuste de Mix — é uma
+    segunda leitura do mesmo arquivo, com mais colunas.
+
+    Retorna DataFrame com colunas: ean, estoque, estoque_venda_rs,
+    unidades_vendidas_3m.
+
+    Levanta MultiplasLojasEstoqueError nas mesmas condições de
+    carregar_estoque().
+    """
+    colunas_cfg = config.COLUNAS_ESTOQUE_RESULTADO
+    bruto = pd.read_excel(caminho_arquivo, header=None, dtype=object)
+
+    linha_cabecalho = _localizar_linha_cabecalho(bruto, list(colunas_cfg.values()))
+    mapa_idx = _mapear_colunas(bruto.iloc[linha_cabecalho], colunas_cfg)
+
+    faltando = [k for k, v in mapa_idx.items() if v is None and k != "id_loja"]
+    if faltando:
+        raise PlanilhaInvalidaError(
+            "Colunas necessárias para o cálculo do Resultado da ação não encontradas "
+            f"na planilha de estoque: {faltando}"
+        )
+
+    dados = bruto.iloc[linha_cabecalho + 1:].copy()
+
+    estoque_numerico = pd.to_numeric(dados.iloc[:, mapa_idx["estoque"]], errors="coerce")
+    dados = dados[estoque_numerico.notna()].copy()
+
+    if mapa_idx["id_loja"] is not None:
+        ids_unicos = (
+            dados.iloc[:, mapa_idx["id_loja"]]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .unique()
+            .tolist()
+        )
+        if len(ids_unicos) > 1:
+            raise MultiplasLojasEstoqueError(ids_unicos)
+
+    resultado = pd.DataFrame({
+        "ean": dados.iloc[:, mapa_idx["ean"]].apply(normalizar_ean).values,
+        "estoque": pd.to_numeric(dados.iloc[:, mapa_idx["estoque"]], errors="coerce").values,
+        "estoque_venda_rs": pd.to_numeric(dados.iloc[:, mapa_idx["estoque_venda_rs"]], errors="coerce").values,
+        "unidades_vendidas_3m": pd.to_numeric(dados.iloc[:, mapa_idx["unidades_vendidas_3m"]], errors="coerce").values,
+    })
+    resultado = resultado.dropna(subset=["ean"]).reset_index(drop=True)
+    resultado["estoque"] = resultado["estoque"].fillna(0)
+    resultado["estoque_venda_rs"] = resultado["estoque_venda_rs"].fillna(0)
+    resultado["unidades_vendidas_3m"] = resultado["unidades_vendidas_3m"].fillna(0)
+
+    resultado = resultado.groupby("ean", as_index=False).agg(
+        estoque=("estoque", "sum"),
+        estoque_venda_rs=("estoque_venda_rs", "sum"),
+        unidades_vendidas_3m=("unidades_vendidas_3m", "sum"),
+    )
+
+    return resultado
 
 
 # ---------------------------------------------------------------------------
@@ -553,5 +799,177 @@ def montar_tabela_sugestao_gc(mapa_df: pd.DataFrame, ajuste_salvo: dict | None) 
     tabela = _ordenar_por_posicao(tabela)
 
     resultado = tabela[colunas_saida].copy()
+    resultado.attrs["produtos_nao_encontrados"] = nao_encontrados
+    return resultado
+
+
+# ---------------------------------------------------------------------------
+# Montagem da tabela do Resultado da ação (Aba 3 — Conferência)
+# ---------------------------------------------------------------------------
+
+def montar_tabela_resultado_acao(
+    mapa_df: pd.DataFrame,
+    ajuste_salvo: dict | None,
+    estoque_resultado_df: pd.DataFrame,
+    retrato_df: pd.DataFrame,
+    estoque_atualizado_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Monta a tabela da feature "Resultado da ação" (Aba 3 — Conferência):
+    compara o faturamento mensal "antes" (calculado a partir do mesmo
+    Estoque já usado no Ajuste de Mix) com o "depois" (Retrato de Vendas),
+    produto a produto.
+
+    A base da lista é a mesma do ajuste de mix SALVO (ajuste_mix.json) —
+    mesma lógica de montar_tabela_sugestao_gc, incluindo a ordenação pela
+    posição de gôndola — e não a lista completa do Mapa da Farmácia: o
+    resultado só faz sentido para os produtos que o consultor efetivamente
+    decidiu acompanhar naquele ciclo. Produtos que tiveram venda no
+    Retrato mas NÃO estavam no Estoque "antes" são adicionados ao FINAL
+    da lista com status "novo" (sem posição de gôndola definida, já que
+    não faziam parte do ajuste original).
+
+    Cálculo do "antes" (por produto, a partir de estoque_resultado_df —
+    ver carregar_estoque_resultado):
+      preço médio         = Estoque venda (R$) ÷ Unidades em estoque
+      unidades vendidas/mês = Unidades vendidas (3 meses) ÷ 3
+      faturamento/mês     = unidades vendidas/mês × preço médio
+    Quando o estoque atual é 0, o preço médio não pode ser calculado por
+    essa fórmula — tratado como 0 (aproximação conservadora: sem
+    referência de estoque, não há como estimar o faturamento "antes"
+    desse produto a partir dela).
+
+    Status por produto:
+      "sem_dado"          — EAN não localizado (não dá pra cruzar nada)
+      "normal"            — teve venda no Retrato (cresceu, caiu ou ficou
+                             estável — a UI decide a partir dos números)
+      "sem_venda_periodo" — ausente do Retrato, mas o Estoque atualizado
+                             confirma que o produto continua em estoque
+                             (neutro — só não vendeu nesse mês, não saiu
+                             do mix)
+      "deixou_de_vender"  — ausente do Retrato E ausente/zerado no
+                             Estoque atualizado (saiu do mix de verdade)
+      "novo"               — vendeu no período mas não estava no Estoque
+                             "antes" (produto novo na loja)
+
+    Retorna DataFrame com colunas: posicao, ean_original, ean, ean_valido,
+    produto, frentes, status, unidades_antes, valor_unitario_antes,
+    faturamento_antes, unidades_depois, faturamento_depois,
+    crescimento_rs, crescimento_pct. Também expõe, em
+    resultado.attrs["produtos_nao_encontrados"], os itens do ajuste_mix
+    salvo que não foram mais encontrados no Mapa da Farmácia atual (mesma
+    convenção de montar_tabela_sugestao_gc). Se `ajuste_salvo` for None
+    (ou não tiver produtos), retorna um DataFrame vazio com essas mesmas
+    colunas.
+    """
+    colunas_saida = [
+        "posicao", "ean_original", "ean", "ean_valido", "produto", "frentes", "status",
+        "unidades_antes", "valor_unitario_antes", "faturamento_antes",
+        "unidades_depois", "faturamento_depois", "crescimento_rs", "crescimento_pct",
+    ]
+
+    if not ajuste_salvo or not ajuste_salvo.get("produtos"):
+        vazio = pd.DataFrame(columns=colunas_saida)
+        vazio.attrs["produtos_nao_encontrados"] = []
+        return vazio
+
+    produtos_salvos = pd.DataFrame(ajuste_salvo["produtos"])[["ean_original", "quantidade"]]
+    mapa_com_validade = mapa_df.assign(ean_valido=mapa_df["ean"].notna())
+
+    base = produtos_salvos.merge(
+        mapa_com_validade[["posicao", "ean_original", "produto", "frentes", "ean_valido", "ean"]],
+        on="ean_original",
+        how="left",
+        indicator=True,
+    )
+    nao_encontrados = (
+        base[base["_merge"] == "left_only"][["ean_original", "quantidade"]]
+        .to_dict("records")
+    )
+    base = base[base["_merge"] == "both"].drop(columns=["_merge", "quantidade"]).reset_index(drop=True)
+    base = _ordenar_por_posicao(base)
+
+    # ---- Cálculo do "antes" ----
+    base = base.merge(estoque_resultado_df, on="ean", how="left")
+    for col in ("estoque", "estoque_venda_rs", "unidades_vendidas_3m"):
+        base[col] = base[col].fillna(0)
+
+    base["valor_unitario_antes"] = base.apply(
+        lambda r: (r["estoque_venda_rs"] / r["estoque"]) if r["estoque"] > 0 else 0.0,
+        axis=1,
+    )
+    base["unidades_antes"] = base["unidades_vendidas_3m"] / 3
+    base["faturamento_antes"] = base["unidades_antes"] * base["valor_unitario_antes"]
+
+    # ---- Cálculo do "depois" ----
+    base = base.merge(
+        retrato_df.rename(columns={
+            "quantidade_vendida": "unidades_depois",
+            "valor_vendido": "faturamento_depois",
+        }),
+        on="ean",
+        how="left",
+        indicator="_em_retrato",
+    )
+    base["_ausente_no_retrato"] = base["_em_retrato"] == "left_only"
+    base["unidades_depois"] = base["unidades_depois"].fillna(0)
+    base["faturamento_depois"] = base["faturamento_depois"].fillna(0)
+
+    estoque_atualizado_por_ean = (
+        estoque_atualizado_df.set_index("ean")["estoque"]
+        if len(estoque_atualizado_df) else pd.Series(dtype=float)
+    )
+
+    def _status_linha(row):
+        if not row["ean_valido"]:
+            return "sem_dado"
+        if not row["_ausente_no_retrato"]:
+            return "normal"
+        estoque_atual = estoque_atualizado_por_ean.get(row["ean"], 0.0)
+        if estoque_atual and estoque_atual > 0:
+            return "sem_venda_periodo"
+        return "deixou_de_vender"
+
+    base["status"] = base.apply(_status_linha, axis=1)
+    base = base.drop(columns=["_em_retrato", "_ausente_no_retrato", "estoque", "estoque_venda_rs", "unidades_vendidas_3m"])
+
+    # ---- Produtos novos: venderam no período, mas não estavam no
+    # Estoque "antes" (nem já presentes na base acima) ----
+    eans_antes = set(estoque_resultado_df["ean"].dropna())
+    eans_base = set(base["ean"].dropna())
+    novos_df = retrato_df[
+        ~retrato_df["ean"].isin(eans_antes) & ~retrato_df["ean"].isin(eans_base)
+    ].copy()
+
+    if len(novos_df) > 0:
+        novos_df = novos_df.sort_values("valor_vendido", ascending=False)
+        info_produto = (
+            mapa_df.dropna(subset=["ean"]).drop_duplicates(subset="ean")[["ean", "produto", "frentes"]]
+        )
+        novos_df = novos_df.merge(info_produto, on="ean", how="left")
+        novos_df["produto"] = novos_df["produto"].fillna("Produto não identificado no Mapa da Farmácia")
+        novos = pd.DataFrame({
+            "posicao": None,
+            "ean_original": novos_df["ean"],
+            "ean": novos_df["ean"],
+            "ean_valido": True,
+            "produto": novos_df["produto"],
+            "frentes": novos_df.get("frentes"),
+            "status": "novo",
+            "unidades_antes": 0.0,
+            "valor_unitario_antes": 0.0,
+            "faturamento_antes": 0.0,
+            "unidades_depois": novos_df["quantidade_vendida"],
+            "faturamento_depois": novos_df["valor_vendido"],
+        })
+        base = pd.concat([base, novos], ignore_index=True)
+
+    # ---- Crescimento ----
+    base["crescimento_rs"] = base["faturamento_depois"] - base["faturamento_antes"]
+    base["crescimento_pct"] = base.apply(
+        lambda r: (r["crescimento_rs"] / r["faturamento_antes"] * 100) if r["faturamento_antes"] > 0 else None,
+        axis=1,
+    )
+
+    resultado = base[colunas_saida].reset_index(drop=True)
     resultado.attrs["produtos_nao_encontrados"] = nao_encontrados
     return resultado

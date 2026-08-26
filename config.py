@@ -61,6 +61,17 @@ FILE_SPECS = {
         "extensions": [".json"],
         "obrigatorio": False,  # não existe até o consultor salvar pela 1a vez
     },
+    "retrato_vendas": {
+        "basenames": ["retrato_vendas"],
+        "extensions": [".xlsx", ".xls"],
+        "obrigatorio": False,  # só existe quando a loja já tem ajuste de mix e o "depois" foi enviado
+    },
+    "estoque_atualizado": {
+        "basenames": ["estoque_atualizado"],
+        "extensions": [".xlsx", ".xls"],
+        "obrigatorio": False,  # acompanha o retrato_vendas — usado só para diferenciar
+        # "deixou de vender" de "sem venda no período" na feature Resultado da ação
+    },
 }
 
 # Nome do arquivo da base nacional de demanda, dentro de _Base/
@@ -143,6 +154,27 @@ COLUNAS_BASE_NACIONAL = {
     "categoria": "CATEGORIA",
 }
 
+# Planilha "Retrato de Vendas" (Aba 3 — Resultado da ação): export mensal
+# de vendas por produto, já filtrado na origem para só vendas > 0 — ver
+# nota em data_loader.carregar_retrato_vendas sobre essa característica.
+COLUNAS_RETRATO_VENDAS = {
+    "ean": "CodigoBarras",
+    "quantidade": "Quantidade",
+    "valor": "Variável de Análise",
+}
+
+# Planilha de Estoque, lida de novo com colunas EXTRAS além das já usadas
+# em COLUNAS_ESTOQUE — necessárias só para calcular o "antes" (preço médio
+# e faturamento mensal) da feature Resultado da ação. Usa o MESMO arquivo
+# "estoque" já enviado no ciclo (o "antes"), não um upload novo.
+COLUNAS_ESTOQUE_RESULTADO = {
+    "id_loja": "Id lojas",
+    "ean": "Cód. barras",
+    "estoque": "Unidades em estoque",
+    "estoque_venda_rs": "Estoque venda (R$)",
+    "unidades_vendidas_3m": "Unidades vendidas",
+}
+
 # ---------------------------------------------------------------------------
 # Identidade visual (usada no styles.py e na geração do PDF)
 # ---------------------------------------------------------------------------
@@ -160,6 +192,12 @@ COR_ROXO_BG = "#F0EBFA"
 COR_ROXO_TEXTO = "#5B3A9E"
 COR_CINZA_BG = "#EEF0F3"
 COR_CINZA_TEXTO = "#4B5563"
+# Único uso de tom "negativo" (avermelhado) do projeto — reservado para
+# quedas de venda no Resultado da ação. O resto do app evita vermelho de
+# propósito (ver comentários em modules/styles.py), mas aqui o pedido foi
+# destacar queda de forma mais forte que o neutro cinza.
+COR_VERMELHO_BG = "#FBE3E1"
+COR_VERMELHO_TEXTO = "#9A342C"
 
 LOGO_PATH = "assets/logo_rmc.webp"
 

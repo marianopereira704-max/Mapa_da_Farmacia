@@ -39,41 +39,30 @@ import modules.data_loader as dl
 def preparar_base(caminho_entrada: str, caminho_saida: str | None = None) -> str:
     print(f"Lendo base bruta: {caminho_entrada}")
     bruta = dl.carregar_base_nacional_bruta(caminho_entrada)
-    total_original = len(bruta)
-    print(f"  {total_original:,} produtos na base bruta".replace(",", "."))
+    print(f"  {len(bruta):,} produtos na base bruta".replace(",", "."))
 
-    tratada = bruta.copy()
+    # A lógica dos dois filtros (categoria RX_* e demanda mínima) vive em
+    # modules.data_loader.tratar_base_nacional() — mesma função usada pelo
+    # upload automático da base nacional em app.py, pra não ter a regra
+    # duplicada em dois lugares.
+    tratada, resumo = dl.tratar_base_nacional(bruta)
 
-    # --- Filtro 1: categorias fora do escopo (RX_*) ------------------------
-    if tratada["categoria"].notna().any() and config.PREFIXOS_CATEGORIA_EXCLUIDOS:
-        mascara_excluida = tratada["categoria"].fillna("").str.startswith(
-            tuple(config.PREFIXOS_CATEGORIA_EXCLUIDOS)
-        )
-        removidos_categoria = int(mascara_excluida.sum())
-        tratada = tratada[~mascara_excluida].copy()
+    if resumo.removidos_categoria:
         print(
             f"  removidos por categoria excluída "
-            f"({', '.join(config.PREFIXOS_CATEGORIA_EXCLUIDOS)}): {removidos_categoria:,}"
+            f"({', '.join(config.PREFIXOS_CATEGORIA_EXCLUIDOS)}): {resumo.removidos_categoria:,}"
             .replace(",", ".")
         )
-
-    # --- Filtro 2: demanda mínima -------------------------------------------
-    mascara_baixa_demanda = tratada["demanda"] < config.DEMANDA_MINIMA_BASE_NACIONAL
-    removidos_demanda = int(mascara_baixa_demanda.sum())
-    tratada = tratada[~mascara_baixa_demanda].copy()
     print(
         f"  removidos por demanda abaixo de {config.DEMANDA_MINIMA_BASE_NACIONAL}: "
-        f"{removidos_demanda:,}".replace(",", ".")
+        f"{resumo.removidos_demanda:,}".replace(",", ".")
     )
 
-    # A versão tratada só precisa de ean + demanda para o cruzamento em
-    # produção (é o que carregar_base_nacional() espera).
-    tratada = tratada[["ean", "demanda"]].reset_index(drop=True)
-
-    total_final = len(tratada)
-    reducao_pct = (1 - total_final / total_original) * 100 if total_original else 0
+    reducao_pct = (
+        (1 - resumo.total_final / resumo.total_original) * 100 if resumo.total_original else 0
+    )
     print(
-        f"  total final: {total_final:,} produtos "
+        f"  total final: {resumo.total_final:,} produtos "
         f"(redução de {reducao_pct:.1f}%)".replace(",", ".")
     )
 

@@ -276,6 +276,43 @@ def aplicar_estilo() -> None:
             margin-top: -1rem !important;
         }}
 
+        /* ---- Mesmo problema do bloco acima, só que do lado do Consultor ----
+        O marcador .mdf-campo-consultor-marker (usado só pra escopar o CSS
+        de altura/borda/cor do bloco mais acima, sem afetar outros
+        text_input do app) é escrito como um st.markdown SEPARADO, logo
+        antes do st.text_input("Consultor", ...) — ou seja, ele também é
+        um elemento a mais dentro da coluna, e o Streamlit também insere o
+        mesmo espaçamento padrão (1rem) entre ele e a caixa do Consultor
+        logo abaixo. Isso não tinha sido notado antes porque, quando o
+        campo Loja também tinha esse espaço "sobrando" (antes do bloco
+        acima existir), os dois lados ficavam igualmente deslocados pra
+        baixo — pareciam alinhados um com o outro, só que os dois errados.
+        Depois de corrigir só o lado da Loja, esse resto ficou visível: a
+        caixa do Consultor nascia visivelmente mais baixa que a da Loja.
+        Mesma solução: cancela o espaçamento entre o marcador e a caixa que
+        vem logo depois dele (a checagem via :has() do marcador, sem contar
+        níveis exatos de div, é proposital — mais resistente a mudanças na
+        estrutura interna do Streamlit do que contar profundidade fixa). */
+        div[data-testid="stElementContainer"]:has(.mdf-campo-consultor-marker) + div[data-testid="stElementContainer"] {{
+            margin-top: -1rem !important;
+        }}
+        /* O -1rem acima só cancela o ESPAÇAMENTO padrão entre elementos —
+        não zera a ALTURA PRÓPRIA do <p> vazio que envolve o marcador (todo
+        st.markdown gera um parágrafo, mesmo com conteúdo invisível). Essa
+        altura residual (a de uma linha de texto vazia) sobrava e empurrava
+        a caixa do Consultor alguns pixels abaixo da caixa da Loja, mesmo
+        com o cancelamento acima. Mesmo padrão já usado em .mdf-foto-marker
+        mais abaixo: colapsa o parágrafo E o stElementContainer que o
+        envolve a zero, não só o espaçamento entre eles. */
+        p:has(> .mdf-campo-consultor-marker) {{
+            margin: 0; padding: 0; height: 0; line-height: 0;
+        }}
+        div[data-testid="stElementContainer"]:has(.mdf-campo-consultor-marker) {{
+            height: 0 !important;
+            min-height: 0 !important;
+            overflow: hidden !important;
+        }}
+
         /* Cards de produto (linhas dentro do quadro) — sem borda própria,
         só um leve background para diferenciar cada linha. */
         div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-row-marker) {{
@@ -359,6 +396,99 @@ def aplicar_estilo() -> None:
         .mdf-badge-sem-estoque {{ background: {config.COR_CINZA_BG}; color: {config.COR_CINZA_TEXTO}; }}
         .mdf-badge-nao-encontrado {{ background: #EEF0F3; color: #7A8699; }}
         .mdf-badge-frentes {{ background: {config.COR_ROXO_BG}; color: {config.COR_ROXO_TEXTO}; }}
+
+        /* ---- Badges inline pequenos (Resultado da ação — "novo" /
+        "deixou de vender", junto ao nome do produto na lista e no Top 3).
+        Mais compactos que .mdf-badge (usado nas linhas do Ajuste de Mix),
+        pra caber ao lado do nome sem competir com ele. */
+        .mdf-badge-inline {{
+            font-size: 10px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.03em; padding: 1px 7px; border-radius: 8px;
+            margin-left: 6px; vertical-align: middle; display: inline-block;
+        }}
+        .mdf-badge-inline-novo {{ background: {config.COR_VERDE_BG}; color: {config.COR_VERDE_TEXTO}; }}
+        .mdf-badge-inline-deixou {{ background: {config.COR_AMBAR_BG}; color: {config.COR_AMBAR_TEXTO}; }}
+
+        /* ---- Chips de variação (Resultado da ação) — crescimento em R$
+        no Top 3 e % na lista produto a produto. Verde = cresceu, cinza =
+        neutro (sem venda no período, sem dado), âmbar = alerta (deixou de
+        vender), vermelho = queda de venda (única exceção à convenção
+        "nunca vermelho" do resto do projeto — pedido explícito pra dar
+        mais destaque negativo à queda do que o neutro cinza dava). */
+        .mdf-chip {{
+            display: inline-flex; align-items: center; gap: 3px;
+            font-size: 12px; font-weight: 700; padding: 2px 9px;
+            border-radius: 10px; white-space: nowrap;
+        }}
+        .mdf-chip-positivo {{ background: {config.COR_VERDE_BG}; color: {config.COR_VERDE_TEXTO}; }}
+        .mdf-chip-neutro {{ background: {config.COR_CINZA_BG}; color: {config.COR_CINZA_TEXTO}; }}
+        .mdf-chip-alerta {{ background: {config.COR_AMBAR_BG}; color: {config.COR_AMBAR_TEXTO}; }}
+        .mdf-chip-negativo {{ background: {config.COR_VERMELHO_BG}; color: {config.COR_VERMELHO_TEXTO}; }}
+
+        /* ---- Cartões de estatística (Resultado da ação) — 3 tiles lado
+        a lado via st.columns(3), mesmo padrão marcador+:has() dos demais
+        cartões do projeto. min-height força os 3 a terem a mesma altura
+        mesmo quando um deles tem um texto de apoio mais curto (ex.:
+        "Faturamento mensal" tem só 1 linha, os outros 2 têm 2) — é um
+        "piso": se o conteúdo natural for maior que isso, o cartão cresce
+        normalmente, não corta nada. */
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-stat-card-marker) {{
+            border-radius: 14px !important;
+            border: 1px solid #E4E7EB !important;
+            background: #FFFFFF;
+            padding: 16px 18px !important;
+            min-height: 130px;
+            box-sizing: border-box;
+        }}
+        .mdf-stat-label {{
+            font-size: 11.5px; font-weight: 600; text-transform: uppercase;
+            letter-spacing: 0.03em; color: #8A93A3; margin: 0 0 8px 0;
+        }}
+        .mdf-stat-valor {{ font-size: 24px; font-weight: 800; color: {config.COR_NAVY}; margin: 0; }}
+        .mdf-stat-valor-positivo {{ color: {config.COR_VERDE_TEXTO}; }}
+        .mdf-stat-sub {{ font-size: 12px; color: #8A93A3; margin: 6px 0 0 0; }}
+
+        /* ---- Card "Top 3 produtos que mais cresceram" e card "Deixou de
+        vender" (Resultado da ação) — mesma família de cartão branco com
+        borda; o de "deixou de vender" ganha um acento âmbar à esquerda
+        pra chamar atenção sem usar vermelho. */
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-top3-card-marker) {{
+            border-radius: 14px !important;
+            border: 1px solid #E4E7EB !important;
+            background: #FFFFFF;
+            padding: 16px 20px !important;
+        }}
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-alerta-card-marker) {{
+            border-radius: 14px !important;
+            border: 1px solid #E4E7EB !important;
+            border-left: 3px solid {config.COR_AMBAR_TEXTO} !important;
+            background: #FFFFFF;
+            padding: 16px 20px !important;
+        }}
+        .mdf-rank-badge {{
+            width: 24px; height: 24px; border-radius: 50%;
+            background: {config.COR_VERDE_BG}; color: {config.COR_VERDE_TEXTO};
+            font-size: 12px; font-weight: 800;
+            display: inline-flex; align-items: center; justify-content: center;
+        }}
+        /* Ícone "⚠" do título do card "Deixou de vender" — pintado no
+        mesmo âmbar do acento da borda esquerda do card, em vez do navy
+        padrão de título, pra amarrar visualmente ícone + acento. */
+        .mdf-icone-alerta {{ color: {config.COR_AMBAR_TEXTO}; }}
+
+        /* ---- Textos auxiliares (Resultado da ação) ---- */
+        .mdf-secao-titulo {{ font-size: 17px; font-weight: 700; color: {config.COR_NAVY}; margin: 0 0 4px 0; }}
+        .mdf-comparativo-legenda {{ font-size: 13px; color: #8A93A3; margin: 0 0 16px 0; }}
+        .mdf-comparativo-legenda b {{ color: #1A1A1A; font-weight: 600; }}
+        .mdf-lista-titulo {{ font-size: 14px; font-weight: 700; color: {config.COR_NAVY}; margin: 0 0 4px 0; }}
+        .mdf-par-compacto {{ font-size: 12.5px; color: #1A1A1A; margin: 4px 0 0 0; }}
+        .mdf-par-compacto .antes {{ color: #8A93A3; }}
+        .mdf-par-compacto .seta {{ color: #8A93A3; margin: 0 3px; font-size: 11px; }}
+        .mdf-par-compacto {{ font-size: 12.5px; color: #1A1A1A; margin: 4px 0 0 0; }}
+        .mdf-par-compacto .antes {{ color: #8A93A3; }}
+        .mdf-par-compacto .seta {{ color: #8A93A3; margin: 0 3px; font-size: 11px; }}
+
+        /* ---- Cartões de foto (Aba 3 — Conferência) ----
 
         /* ---- Cartões de foto (Aba 3 — Conferência) ----
         Mesma linguagem visual do quadro de produtos (.mdf-painel-marker):
@@ -748,3 +878,89 @@ def badge_frentes(frentes) -> str:
     if valor >= 2:
         return f'<span class="mdf-badge mdf-badge-frentes">Frentes: {valor}</span>'
     return f"Frentes: {valor}"
+
+
+# ---------------------------------------------------------------------------
+# Resultado da ação (Aba 3 — Conferência)
+# ---------------------------------------------------------------------------
+
+def formatar_rs(valor) -> str:
+    """Formata um número como moeda brasileira (R$ 1.234,56), sem
+    depender do módulo locale (evita efeito colateral global num processo
+    Streamlit compartilhado)."""
+    try:
+        valor = float(valor)
+    except (TypeError, ValueError):
+        valor = 0.0
+    sinal = "-" if valor < 0 else ""
+    texto = f"{abs(valor):,.2f}"
+    texto = texto.replace(",", "§").replace(".", ",").replace("§", ".")
+    return f"{sinal}R$ {texto}"
+
+
+def cartao_stat(titulo: str, valor_html: str, sub: str | None = None) -> None:
+    """Renderiza um cartão de estatística da Aba 3 — Resultado da ação
+    (rótulo em caixa alta + valor em destaque + legenda opcional embaixo).
+    `valor_html` já vem pronto (o chamador monta o HTML do valor, o que
+    permite compor com chip ao lado, classe de cor condicional etc.) —
+    mesmo padrão de "container + marcador invisível + CSS via :has()" já
+    usado em cartao_foto()."""
+    with st.container():
+        st.markdown('<span class="mdf-stat-card-marker"></span>', unsafe_allow_html=True)
+        st.markdown(f'<p class="mdf-stat-label">{titulo}</p>', unsafe_allow_html=True)
+        st.markdown(valor_html, unsafe_allow_html=True)
+        if sub:
+            st.markdown(f'<p class="mdf-stat-sub">{sub}</p>', unsafe_allow_html=True)
+
+
+def chip_crescimento_rs(crescimento_rs) -> str:
+    """Chip de crescimento em R$ — usado no card Top 3 (só lista produtos
+    com crescimento positivo, por isso sempre no tom verde)."""
+    return f'<span class="mdf-chip mdf-chip-positivo">▲ +{formatar_rs(crescimento_rs)}</span>'
+
+
+def chip_variacao_produto(status: str, crescimento_rs, crescimento_pct) -> str:
+    """Chip de variação de um produto na lista "produto a produto" do
+    Resultado da ação — texto e cor dependem do status calculado por
+    data_loader.montar_tabela_resultado_acao(). Verde = cresceu, vermelho =
+    queda real de venda (pedido explícito de destaque negativo — única
+    exceção à convenção "nunca vermelho" do resto do projeto), cinza =
+    ausência de dado (sem venda no período, sem dado, flat em 0), âmbar =
+    "deixou de vender" (produto que saiu do mix de verdade)."""
+    if status == "novo":
+        return '<span class="mdf-chip mdf-chip-positivo">novo</span>'
+    if status == "deixou_de_vender":
+        return '<span class="mdf-chip mdf-chip-alerta">sem estoque</span>'
+    if status == "sem_venda_periodo":
+        return '<span class="mdf-chip mdf-chip-neutro">sem venda</span>'
+    if status == "sem_dado":
+        return '<span class="mdf-chip mdf-chip-neutro">sem dado</span>'
+
+    # status == "normal" — teve venda no período, mas pode não ter tido
+    # faturamento "antes" pra calcular uma % (produto do ajuste de mix
+    # sem correspondência no Estoque) — nesse caso mostra a variação em
+    # R$ em vez de %, sem quebrar a exibição.
+    if crescimento_pct is None:
+        if crescimento_rs > 0:
+            return f'<span class="mdf-chip mdf-chip-positivo">▲ +{formatar_rs(crescimento_rs)}</span>'
+        if crescimento_rs < 0:
+            return f'<span class="mdf-chip mdf-chip-negativo">▼ {formatar_rs(crescimento_rs)}</span>'
+        return '<span class="mdf-chip mdf-chip-neutro">— sem variação</span>'
+
+    if crescimento_pct > 0:
+        return f'<span class="mdf-chip mdf-chip-positivo">▲ +{crescimento_pct:.0f}%</span>'
+    if crescimento_pct < 0:
+        return f'<span class="mdf-chip mdf-chip-negativo">▼ {crescimento_pct:.0f}%</span>'
+    return '<span class="mdf-chip mdf-chip-neutro">— 0%</span>'
+
+
+def badge_inline_status_resultado(status: str) -> str:
+    """Badge inline pequeno junto ao nome do produto (Resultado da ação —
+    lista e Top 3) — só para os status que merecem destaque visual extra
+    além do chip de variação: "novo" e "deixou_de_vender". Demais status
+    retornam string vazia (sem badge adicional)."""
+    if status == "novo":
+        return '<span class="mdf-badge-inline mdf-badge-inline-novo">novo</span>'
+    if status == "deixou_de_vender":
+        return '<span class="mdf-badge-inline mdf-badge-inline-deixou">deixou de vender</span>'
+    return ""
