@@ -1290,8 +1290,12 @@ elif pagina_atual == "Análise":
 
                     for _, row in tabela_exibida.iterrows():
                         chave_produto = row["ean_original"] if not row["ean_valido"] else row["ean"]
+                        valor_atual = quantidades_editadas.get(chave_produto, row["quantidade"])
+                        eh_qtd_negativa = pd.notna(valor_atual) and valor_atual < 0
                         with st.container():
                             st.markdown('<span class="mdf-row-marker"></span>', unsafe_allow_html=True)
+                            if eh_qtd_negativa:
+                                st.markdown('<span class="mdf-row-qtd-negativa-marker"></span>', unsafe_allow_html=True)
                             c1, c2, c3 = st.columns([0.08, 0.66, 0.26])
                             with c1:
                                 posicao_label = row["posicao"] if pd.notna(row["posicao"]) else "–"
@@ -1301,15 +1305,24 @@ elif pagina_atual == "Análise":
                                 st.markdown(f'<p class="mdf-produto-nome">{row["produto"]}</p>', unsafe_allow_html=True)
                                 st.markdown(f'<p class="mdf-produto-meta">{badge_html}</p>', unsafe_allow_html=True)
                             with c3:
-                                valor_atual = quantidades_editadas.get(chave_produto, row["quantidade"])
-                                nova_qtd = st.number_input(
-                                    "Quantidade",
-                                    min_value=0,
-                                    value=int(valor_atual) if pd.notna(valor_atual) else 0,
-                                    step=1,
-                                    key=f"qtd::{chave_estado}::{chave_produto}",
-                                    label_visibility="collapsed",
-                                )
+                                # Piso normalmente é 0 (não existe "pedir quantidade negativa"). Mas se
+                                # o estoque da planilha de origem já veio negativo, o piso desce até
+                                # esse valor pra não travar o widget (StreamlitValueBelowMinError) — o
+                                # consultor consegue corrigir na hora clicando em "+".
+                                piso = min(0, int(row["quantidade"])) if pd.notna(row["quantidade"]) else 0
+                                col_input, col_alerta = st.columns([0.85, 0.15])
+                                with col_input:
+                                    nova_qtd = st.number_input(
+                                        "Quantidade",
+                                        min_value=piso,
+                                        value=int(valor_atual) if pd.notna(valor_atual) else 0,
+                                        step=1,
+                                        key=f"qtd::{chave_estado}::{chave_produto}",
+                                        label_visibility="collapsed",
+                                    )
+                                with col_alerta:
+                                    if eh_qtd_negativa:
+                                        st.markdown('<span class="mdf-qtd-alerta-icone">⚠</span>', unsafe_allow_html=True)
                                 quantidades_editadas[chave_produto] = nova_qtd
 
         with aba_gc:

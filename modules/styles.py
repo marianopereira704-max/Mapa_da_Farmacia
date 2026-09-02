@@ -493,6 +493,29 @@ def aplicar_estilo() -> None:
         padrão de título, pra amarrar visualmente ícone + acento. */
         .mdf-icone-alerta {{ color: {config.COR_AMBAR_TEXTO}; }}
 
+        /* ---- Alerta de quantidade negativa (Ajuste de mix) — estoque veio
+        negativo na planilha de origem (erro de digitação/exportação na loja).
+        Junto com .mdf-chip-negativo (queda de venda), é a segunda exceção
+        deliberada à convenção "nunca vermelho" do projeto — aqui o vermelho
+        foi escolhido de propósito pra chamar mais atenção que o âmbar padrão,
+        já que é sinal de dado inválido, não só de atenção normal. */
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-row-qtd-negativa-marker) [data-testid="stNumberInput"] button {{
+            border-color: {config.COR_VERMELHO_TEXTO} !important;
+            color: {config.COR_VERMELHO_TEXTO} !important;
+        }}
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-row-qtd-negativa-marker) [data-testid="stNumberInput"] input {{
+            color: {config.COR_VERMELHO_TEXTO} !important;
+            font-weight: 700;
+        }}
+        .mdf-qtd-alerta-icone {{
+            color: {config.COR_VERMELHO_TEXTO};
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+        }}
+
         /* ---- Textos auxiliares (Resultado da ação) ---- */
         .mdf-secao-titulo {{ font-size: 17px; font-weight: 700; color: {config.COR_NAVY}; margin: 0 0 4px 0; }}
         .mdf-comparativo-legenda {{ font-size: 13px; color: #8A93A3; margin: 0 0 16px 0; }}
