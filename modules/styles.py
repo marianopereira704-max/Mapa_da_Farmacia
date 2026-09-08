@@ -81,7 +81,11 @@ def aplicar_estilo() -> None:
         }}
         .mdf-header-subtitle {{ font-size: 13px; color: #B9CBDC; margin: 2px 0 0 0; }}
 
-        /* ---- Abas (st.tabs) ---- */
+        /* ---- Abas (st.tabs) — NÃO usado mais hoje (a página Análise
+        virou 3 st.Page separadas por st.navigation/st.switch_page, com
+        barra de sub-abas própria em CSS — ver bloco abaixo e app.py) —
+        mantido só porque não custa nada deixar e algum outro st.tabs()
+        pode voltar a existir no futuro. */
         .stTabs [data-baseweb="tab-list"] {{
             gap: 4px;
             border-bottom: 1px solid #E4E7EB;
@@ -96,6 +100,47 @@ def aplicar_estilo() -> None:
         .stTabs [aria-selected="true"] {{
             color: {config.COR_NAVY} !important;
             border-bottom-color: {config.COR_VERDE} !important;
+        }}
+
+        /* ---- Barra de sub-abas da página Análise (Ajuste de mix /
+        Sugestão de GC / Conferência) — desde a migração pra st.navigation/
+        st.Page (ver app.py), essas 3 deixaram de ser um único
+        st.segmented_control dentro do mesmo script e viraram 3 st.Page
+        genuinamente separadas: cada "aba" agora é um st.button() próprio
+        (dentro do seu st.container() com marcador ativo/inativo — mesmo
+        padrão marcador+:has() já usado no nav da sidebar logo abaixo) que
+        chama st.switch_page(). Visual buscando repetir o .stTabs do topo
+        deste arquivo o mais próximo possível (linha inferior colorida na
+        aba ativa), não precisa ser pixel-perfect. */
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-abas-analise-marker) {{
+            border-bottom: 1px solid #E4E7EB;
+            margin-bottom: 8px;
+        }}
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-ativa-marker) button,
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-inativa-marker) button {{
+            height: auto;
+            padding: 10px 16px;
+            font-size: 14px;
+            background: transparent !important;
+            border: none !important;
+            border-radius: 0 !important;
+            border-bottom: 2px solid transparent !important;
+            box-shadow: none !important;
+        }}
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-inativa-marker) button {{
+            color: #7A8699 !important;
+            font-weight: 500 !important;
+        }}
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-ativa-marker) button {{
+            color: {config.COR_NAVY} !important;
+            font-weight: 600 !important;
+            border-bottom-color: {config.COR_VERDE} !important;
+        }}
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-ativa-marker) button:hover,
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-ativa-marker) button:focus-visible,
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-inativa-marker) button:hover,
+        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-inativa-marker) button:focus-visible {{
+            color: {config.COR_NAVY} !important;
         }}
 
         /* Os seletores abaixo localizam o container-alvo pela distância
@@ -390,6 +435,18 @@ def aplicar_estilo() -> None:
 
         .mdf-produto-nome {{ font-size: 14px; color: #1A1A1A; margin: 4px 0 0 0; }}
         .mdf-produto-meta {{ font-size: 12px; color: #8A93A3; margin: 0; }}
+
+        /* ---- Controles de paginação (Ajuste de mix / Sugestão de GC /
+        Produto a produto) — texto central "Página X de Y". Os botões
+        "← Anterior"/"Próxima →" ao lado são st.button() nativos, sem
+        marcador especial (visual padrão do Streamlit já basta aqui). */
+        .mdf-paginacao-info {{
+            text-align: center;
+            font-size: 13px;
+            color: #7A8699;
+            margin: 6px 0;
+            line-height: 2.2;
+        }}
 
         /* Quantidade em destaque (Aba 2 — Sugestão de GC): é o dado
         acionável da linha, precisa ser o elemento visualmente mais forte,
@@ -970,7 +1027,7 @@ def chip_variacao_produto(status: str, crescimento_rs, crescimento_pct) -> str:
     if status == "novo":
         return '<span class="mdf-chip mdf-chip-positivo">novo</span>'
     if status == "deixou_de_vender":
-        return '<span class="mdf-chip mdf-chip-alerta">sem estoque</span>'
+        return '<span class="mdf-chip mdf-chip-alerta">deixou de vender</span>'
     if status == "sem_venda_periodo":
         return '<span class="mdf-chip mdf-chip-neutro">sem venda</span>'
     if status == "sem_dado":
