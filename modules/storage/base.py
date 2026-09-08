@@ -36,6 +36,23 @@ class StorageError(Exception):
     encontrado, falha de autenticação, falha de rede, etc.)."""
 
 
+class ArquivoNaoEncontradoError(StorageError):
+    """O arquivo/pasta simplesmente NÃO EXISTE no armazenamento.
+
+    Subclasse de StorageError (então quem só quer saber "deu ruim no
+    storage" continua funcionando com `except StorageError`), mas
+    separada de propósito: "não existe" é um estado NORMAL e esperado
+    do app (loja que ainda não enviou o Modelo, ciclo sem ajuste de mix
+    salvo), enquanto falha de rede/timeout é um ERRO de verdade.
+
+    Sem essa distinção os dois casos ficam indistinguíveis, e o app passa
+    a mentir para o usuário numa queda de rede: diria "Modelo ainda não
+    enviado" (mandando reenviar um arquivo que já está lá) ou "Nenhum
+    ajuste de mix salvo" (quando existe um salvo). Ver os pontos que
+    tratam cada caso em app.py::_carregar_preview_modelo e
+    data_loader.carregar_ajuste_mix_salvo."""
+
+
 class OneDriveStorage(ABC):
     """Contrato que qualquer backend de acesso ao OneDrive deve implementar."""
 

@@ -27,9 +27,60 @@ from __future__ import annotations
 import re
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.config import Config
+# ClientError = erro devolvido PELO serviço (403, 404, NoSuchKey...).
+# BotoCoreError = falha do lado do cliente/rede (ReadTimeoutError,
+# ConnectTimeoutError, EndpointConnectionError, ConnectionClosedError...)
+# — NÃO é subclasse de ClientError, então precisa ser capturada à parte.
+# Sem isso, timeout e conexão resetada (o modo de falha mais comum aqui)
+# subiam crus, sem virar StorageError, e escapavam dos ~14 pontos do app
+# que fazem `except StorageError` justamente pra tratar falha de storage.
+from botocore.exceptions import BotoCoreError, ClientError
 
-from .base import ItemPasta, OneDriveStorage, StorageError
+from .base import ArquivoNaoEncontradoError, ItemPasta, OneDriveStorage, StorageError
+
+# Sem isso, o boto3 usa os defaults do botocore (connect_timeout=60s,
+# read_timeout=60s, retries em modo "legacy") — e read_timeout é por
+# leitura de socket/chunk, não pela operação inteira: uma conexão lenta
+# mas viva nunca dispara esse timeout, não importa quanto tempo o
+# download total leve. Valores explícitos aqui dão um teto previsível
+# em vez de deixar uma conexão degradada travar indefinidamente.
+#
+# ATENÇÃO com a semântica de "max_attempts" do botocore — ela NÃO é
+# "tentativas totais": é "quantos retries além da tentativa inicial"
+# (confirmado em botocore/config.py, docstring de `retries`). Ou seja,
+# max_attempts=1 aqui = 1 tentativa inicial + 1 retry = 2 tentativas
+# totais. Testado e confirmado via client.meta.config.retries depois de
+# construir o client — não confiar só na leitura da documentação sem
+# checar o valor resolvido de verdade.
+#
+# read_timeout=20s e max_attempts=1 (não 60s/3) de propósito: os maiores
+# arquivos reais que este app lê hoje (planilhas, parquet da base
+# nacional, previews de Modelo já reduzidos) levam no máximo ~2-3s numa
+# conexão normal — 20s já é generoso. O motivo de reduzir é o PIOR CASO:
+# com retry "standard", o boto3 tenta a chamada inteira de novo em erro
+# retriável (timeout, conexão resetada) — pior caso é
+# (connect_timeout + read_timeout) × tentativas_totais. A config anterior
+# (60s/max_attempts=3 = 4 tentativas totais) dava até 280s (~4,7min) de
+# espera silenciosa antes de qualquer erro aparecer na tela —
+# indistinguível de "travado" pra quem está usando o app. Com 20s/
+# max_attempts=1 (2 tentativas totais), o teto cai pra 60s: ainda dá uma
+# chance de recuperar de uma falha transitória, mas falha rápido o
+# bastante pra mostrar um erro em vez de parecer travado pra sempre.
+#
+# max_pool_connections=20 (default do botocore é 10): desde que
+# modules/inventario.py passou a ler os metadata.json de cada ciclo em
+# paralelo (ThreadPoolExecutor), o pool de conexões HTTP do cliente passou
+# a ser um limite real — com só 10 conexões simultâneas liberadas, 22
+# leituras paralelas viravam ~3 levas em vez de 1, perdendo boa parte do
+# ganho da paralelização (handshake TLS novo a cada leva). 20 cobre
+# confortavelmente o volume atual de ciclos no bucket, com folga.
+_CONFIG_BOTO3 = Config(
+    connect_timeout=10,
+    read_timeout=20,
+    retries={"max_attempts": 1, "mode": "standard"},
+    max_pool_connections=20,
+)
 
 
 def _regiao_do_endpoint(endpoint_url: str) -> str:
@@ -60,6 +111,7 @@ class DigitalOceanSpacesStorage(OneDriveStorage):
             endpoint_url=endpoint_url,
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
+            config=_CONFIG_BOTO3,
         )
 
     # -- Chaves -----------------------------------------------------------
@@ -115,9 +167,11 @@ class DigitalOceanSpacesStorage(OneDriveStorage):
                     ))
         except ClientError as e:
             raise StorageError(f"Falha ao listar pasta '{caminho_relativo}': {e}") from e
+        except BotoCoreError as e:
+            raise StorageError(f"Falha de rede ao listar pasta '{caminho_relativo}': {e}") from e
 
         if not encontrou_algo:
-            raise StorageError(f"Pasta não encontrada: {caminho_relativo}")
+            raise ArquivoNaoEncontradoError(f"Pasta não encontrada: {caminho_relativo}")
 
         return itens
 
@@ -130,12 +184,19 @@ class DigitalOceanSpacesStorage(OneDriveStorage):
         chave = self._chave(caminho_relativo)
         try:
             resposta = self._cliente.get_object(Bucket=self.bucket, Key=chave)
+            # O .read() fica DENTRO do try de propósito: o corpo da resposta
+            # é lido em streaming DEPOIS do get_object retornar, então uma
+            # queda de conexão no meio do download estoura aqui, não na
+            # linha acima — se ficasse fora, essa falha (justamente a mais
+            # provável numa conexão instável) escaparia sem virar StorageError.
+            return resposta["Body"].read()
         except ClientError as e:
             codigo = e.response.get("Error", {}).get("Code", "")
             if codigo in ("NoSuchKey", "404"):
-                raise StorageError(f"Arquivo não encontrado: {caminho_relativo}") from e
+                raise ArquivoNaoEncontradoError(f"Arquivo não encontrado: {caminho_relativo}") from e
             raise StorageError(f"Falha ao ler arquivo '{caminho_relativo}': {e}") from e
-        return resposta["Body"].read()
+        except BotoCoreError as e:
+            raise StorageError(f"Falha de rede ao ler arquivo '{caminho_relativo}': {e}") from e
 
     def escrever_arquivo_bytes(self, caminho_relativo: str, conteudo: bytes) -> None:
         chave = self._chave(caminho_relativo)
@@ -143,6 +204,8 @@ class DigitalOceanSpacesStorage(OneDriveStorage):
             self._cliente.put_object(Bucket=self.bucket, Key=chave, Body=conteudo)
         except ClientError as e:
             raise StorageError(f"Falha ao escrever arquivo '{caminho_relativo}': {e}") from e
+        except BotoCoreError as e:
+            raise StorageError(f"Falha de rede ao escrever arquivo '{caminho_relativo}': {e}") from e
 
     def existe(self, caminho_relativo: str) -> bool:
         chave = self._chave(caminho_relativo)
@@ -154,6 +217,12 @@ class DigitalOceanSpacesStorage(OneDriveStorage):
             if codigo in ("404", "NoSuchKey"):
                 return False
             raise StorageError(f"Falha ao verificar existência de '{caminho_relativo}': {e}") from e
+        except BotoCoreError as e:
+            # Falha de rede NÃO é "não existe" — precisa virar erro explícito,
+            # senão o app trataria uma conexão caída como "arquivo ausente" e
+            # sobrescreveria dado bom sem pedir confirmação (ver o fluxo de
+            # conflito de upload, que decide sobrescrever com base neste retorno).
+            raise StorageError(f"Falha de rede ao verificar existência de '{caminho_relativo}': {e}") from e
 
     def listar_todos_arquivos(self, prefixo: str = "") -> list[str]:
         # SEM Delimiter -- list_objects_v2 retorna TODOS os objetos sob o
@@ -185,3 +254,5 @@ class DigitalOceanSpacesStorage(OneDriveStorage):
             return resultado
         except ClientError as e:
             raise StorageError(f"Falha ao listar arquivos sob '{prefixo}': {e}") from e
+        except BotoCoreError as e:
+            raise StorageError(f"Falha de rede ao listar arquivos sob '{prefixo}': {e}") from e

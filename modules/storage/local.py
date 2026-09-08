@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .base import ItemPasta, OneDriveStorage, StorageError
+from .base import ArquivoNaoEncontradoError, ItemPasta, OneDriveStorage, StorageError
 
 
 class LocalFolderStorage(OneDriveStorage):
@@ -42,7 +42,7 @@ class LocalFolderStorage(OneDriveStorage):
     def listar_pasta(self, caminho_relativo: str) -> list[ItemPasta]:
         caminho = self._caminho_absoluto(caminho_relativo)
         if not caminho.exists():
-            raise StorageError(f"Pasta não encontrada: {caminho_relativo}")
+            raise ArquivoNaoEncontradoError(f"Pasta não encontrada: {caminho_relativo}")
         if not caminho.is_dir():
             raise StorageError(f"Caminho não é uma pasta: {caminho_relativo}")
 
@@ -64,7 +64,7 @@ class LocalFolderStorage(OneDriveStorage):
     def ler_arquivo_bytes(self, caminho_relativo: str) -> bytes:
         caminho = self._caminho_absoluto(caminho_relativo)
         if not caminho.exists() or not caminho.is_file():
-            raise StorageError(f"Arquivo não encontrado: {caminho_relativo}")
+            raise ArquivoNaoEncontradoError(f"Arquivo não encontrado: {caminho_relativo}")
         try:
             return caminho.read_bytes()
         except OSError as e:

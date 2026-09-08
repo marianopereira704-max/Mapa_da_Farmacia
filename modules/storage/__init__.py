@@ -11,12 +11,17 @@ de configuração, não de código.
 
 from __future__ import annotations
 
-from .base import OneDriveStorage, StorageError
+from .base import ArquivoNaoEncontradoError, OneDriveStorage, StorageError
 from .local import LocalFolderStorage
 from .graph import GraphAPIStorage
 from .spaces import DigitalOceanSpacesStorage
 
-__all__ = ["OneDriveStorage", "StorageError", "get_storage_client"]
+__all__ = [
+    "ArquivoNaoEncontradoError",
+    "OneDriveStorage",
+    "StorageError",
+    "get_storage_client",
+]
 
 
 def get_storage_client(secrets: dict) -> OneDriveStorage:

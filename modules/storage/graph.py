@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import requests
 
-from .base import ItemPasta, OneDriveStorage, StorageError
+from .base import ArquivoNaoEncontradoError, ItemPasta, OneDriveStorage, StorageError
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 AUTH_URL_TEMPLATE = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
@@ -86,7 +86,7 @@ class GraphAPIStorage(OneDriveStorage):
 
         resposta = requests.get(url, headers=self._headers(), timeout=30)
         if resposta.status_code == 404:
-            raise StorageError(f"Pasta não encontrada no OneDrive: {caminho_relativo}")
+            raise ArquivoNaoEncontradoError(f"Pasta não encontrada no OneDrive: {caminho_relativo}")
         if resposta.status_code != 200:
             raise StorageError(
                 f"Falha ao listar pasta '{caminho_relativo}': "
@@ -109,7 +109,7 @@ class GraphAPIStorage(OneDriveStorage):
 
         resposta = requests.get(url, headers=self._headers(), timeout=60)
         if resposta.status_code == 404:
-            raise StorageError(f"Arquivo não encontrado no OneDrive: {caminho_relativo}")
+            raise ArquivoNaoEncontradoError(f"Arquivo não encontrado no OneDrive: {caminho_relativo}")
         if resposta.status_code != 200:
             raise StorageError(
                 f"Falha ao ler arquivo '{caminho_relativo}': "
