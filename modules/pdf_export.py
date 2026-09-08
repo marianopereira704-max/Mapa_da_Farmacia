@@ -41,6 +41,7 @@ ALTURA_RODAPE_RESERVADA = 1.3 * cm  # faixa + espaço p/ "Página X de Y" acima 
 ALTURA_HEADER_TABELA = 0.75 * cm
 ALTURA_LINHA_TABELA = 0.85 * cm
 
+LARGURA_COL_MODULO = 1.6 * cm
 LARGURA_COL_POS = 1.8 * cm
 LARGURA_COL_FRENTES = 2.6 * cm
 LARGURA_COL_OK = 1.8 * cm
@@ -107,6 +108,18 @@ def _desenhar_tag_posicao(c: canvas.Canvas, centro_x: float, centro_y: float, te
     c.setFont("Helvetica-Bold", 8.5)
     baseline = _linha_base_centralizada("Helvetica-Bold", 8.5, centro_y)
     c.drawCentredString(centro_x, baseline, str(texto_posicao))
+
+
+def _desenhar_modulo(c: canvas.Canvas, centro_x: float, centro_y: float, texto_modulo) -> None:
+    """Número do módulo em texto simples (sem o fundo navy da tag de
+    posição, pra não competir visualmente com ela) — só pra dar contexto
+    de qual módulo aquela posição pertence, já que a etiqueta de posição em
+    tela/PDF não mostra mais essa informação (ela reinicia a cada módulo,
+    ver COLUNAS_MAPA_FARMACIA/data_loader)."""
+    c.setFillColor(HexColor(config.COR_NAVY_CLARO))
+    c.setFont("Helvetica-Bold", 9.5)
+    baseline = _linha_base_centralizada("Helvetica-Bold", 9.5, centro_y)
+    c.drawCentredString(centro_x, baseline, str(texto_modulo))
 
 
 def _desenhar_checkbox(c: canvas.Canvas, centro_x: float, centro_y: float, tamanho: float) -> None:
@@ -215,18 +228,24 @@ def _desenhar_cabecalho_conteudo(
     c.line(MARGEM, y_linha, largura - MARGEM, y_linha)
 
 
+def _desenhar_rodape_faixa(c: canvas.Canvas, largura: float) -> None:
+    """Só a faixa de cor do rodapé (navy/verde), sem o texto de paginação —
+    reutilizada em páginas fora da sequência numerada de produtos (ex.: a
+    página Modelo, que fica entre Capa e Produtos)."""
+    largura_navy = 0.75 * largura
+    c.setFillColor(HexColor(config.COR_NAVY))
+    c.rect(0, 0, largura_navy, ALTURA_FAIXA_RODAPE, fill=1, stroke=0)
+    c.setFillColor(HexColor(config.COR_VERDE))
+    c.rect(largura_navy, 0, largura - largura_navy, ALTURA_FAIXA_RODAPE, fill=1, stroke=0)
+
+
 def _desenhar_rodape_conteudo(c: canvas.Canvas, largura: float, pagina_atual: int, total_paginas: int) -> None:
     c.setFont("Helvetica", 8)
     c.setFillColor(HexColor("#7A8699"))
     c.drawRightString(
         largura - MARGEM, ALTURA_FAIXA_RODAPE + 0.25 * cm, f"Página {pagina_atual} de {total_paginas}"
     )
-
-    largura_navy = 0.75 * largura
-    c.setFillColor(HexColor(config.COR_NAVY))
-    c.rect(0, 0, largura_navy, ALTURA_FAIXA_RODAPE, fill=1, stroke=0)
-    c.setFillColor(HexColor(config.COR_VERDE))
-    c.rect(largura_navy, 0, largura - largura_navy, ALTURA_FAIXA_RODAPE, fill=1, stroke=0)
+    _desenhar_rodape_faixa(c, largura)
 
 
 def _desenhar_tabela_pagina(
@@ -235,9 +254,12 @@ def _desenhar_tabela_pagina(
     x0 = MARGEM
     x1 = largura - MARGEM
     largura_total = x1 - x0
-    largura_produto = largura_total - LARGURA_COL_POS - LARGURA_COL_FRENTES - LARGURA_COL_OK
+    largura_produto = (
+        largura_total - LARGURA_COL_MODULO - LARGURA_COL_POS - LARGURA_COL_FRENTES - LARGURA_COL_OK
+    )
 
     colunas = [
+        ("MÓDULO", LARGURA_COL_MODULO),
         ("POS", LARGURA_COL_POS),
         ("PRODUTO", largura_produto),
         ("FRENTES", LARGURA_COL_FRENTES),
@@ -255,7 +277,7 @@ def _desenhar_tabela_pagina(
     baseline_cabecalho = _linha_base_centralizada("Helvetica-Bold", 9, centro_y_cabecalho)
     x_col = x0
     for nome, largura_col in colunas:
-        if nome in ("POS", "OK"):
+        if nome in ("MÓDULO", "POS", "OK"):
             c.drawCentredString(x_col + largura_col / 2, baseline_cabecalho, nome)
         else:
             c.drawString(x_col + 6, baseline_cabecalho, nome)
@@ -271,6 +293,9 @@ def _desenhar_tabela_pagina(
 
         centro_y_linha = y_linha_topo + ALTURA_LINHA_TABELA / 2
         x_col = x0
+
+        _desenhar_modulo(c, x_col + LARGURA_COL_MODULO / 2, centro_y_linha, produto["modulo_label"])
+        x_col += LARGURA_COL_MODULO
 
         _desenhar_tag_posicao(c, x_col + LARGURA_COL_POS / 2, centro_y_linha, produto["posicao_label"])
         x_col += LARGURA_COL_POS
@@ -292,6 +317,61 @@ def _desenhar_tabela_pagina(
         _desenhar_checkbox(c, x_col + LARGURA_COL_OK / 2, centro_y_linha, 0.4 * cm)
 
         y -= ALTURA_LINHA_TABELA
+
+
+# ---------------------------------------------------------------------------
+# Página "Modelo" — imagem de referência do planograma (entre Capa e
+# Produtos). Reaproveita a MESMA imagem já extraída/usada na aba
+# Conferência (ver app.py::_carregar_imagem_conferencia) — este módulo só
+# desenha os bytes recebidos, não sabe de onde vieram nem faz nenhuma
+# extração de PDF por conta própria.
+# ---------------------------------------------------------------------------
+
+def _desenhar_pagina_modelo(
+    c: canvas.Canvas,
+    largura: float,
+    altura: float,
+    logo_reader: ImageReader,
+    subtitulo_ciclo: str,
+    imagem_modelo: bytes,
+) -> None:
+    _desenhar_cabecalho_conteudo(c, largura, altura, logo_reader, subtitulo_ciclo)
+
+    c.setFillColor(HexColor(config.COR_NAVY))
+    c.setFont("Helvetica-Bold", 11)
+    y_titulo = altura - MARGEM - ALTURA_HEADER - 0.55 * cm
+    c.drawString(MARGEM, y_titulo, "Modelo (planograma)")
+
+    x0 = MARGEM
+    x1 = largura - MARGEM
+    largura_area = x1 - x0
+    y_topo_area = y_titulo - 0.35 * cm
+    y_base_area = ALTURA_RODAPE_RESERVADA
+    altura_area = y_topo_area - y_base_area
+
+    try:
+        imagem_reader = ImageReader(io.BytesIO(imagem_modelo))
+        largura_img, altura_img = imagem_reader.getSize()
+        escala = min(largura_area / largura_img, altura_area / altura_img)
+        largura_desenhada = largura_img * escala
+        altura_desenhada = altura_img * escala
+        x_imagem = x0 + (largura_area - largura_desenhada) / 2
+        y_imagem = y_base_area + (altura_area - altura_desenhada) / 2
+        c.drawImage(
+            imagem_reader, x_imagem, y_imagem,
+            width=largura_desenhada, height=altura_desenhada,
+            preserveAspectRatio=True, mask="auto",
+        )
+    except Exception:
+        # Nunca deve derrubar a geração do PDF inteiro por causa de uma
+        # imagem problemática — mesma filosofia defensiva do carregamento
+        # em app.py::_carregar_imagem_conferencia.
+        c.setFont("Helvetica", 10)
+        c.setFillColor(HexColor("#7A8699"))
+        c.drawCentredString(largura / 2, (y_topo_area + y_base_area) / 2, "Não foi possível exibir a imagem do Modelo.")
+
+    _desenhar_rodape_faixa(c, largura)
+    c.showPage()
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +417,13 @@ def _desenhar_fechamento(c: canvas.Canvas, largura: float, altura: float, logo_r
 # Função principal
 # ---------------------------------------------------------------------------
 
-def gerar_pdf_sugestao_gc(produtos_df: pd.DataFrame, consultor: str, loja: str, subtitulo_ciclo: str) -> bytes:
+def gerar_pdf_sugestao_gc(
+    produtos_df: pd.DataFrame,
+    consultor: str,
+    loja: str,
+    subtitulo_ciclo: str,
+    imagem_modelo: bytes | None = None,
+) -> bytes:
     """Recebe o DataFrame já filtrado/ordenado (saída de
     montar_tabela_sugestao_gc), gera o PDF completo em memória e retorna os
     bytes prontos para st.download_button.
@@ -348,6 +434,13 @@ def gerar_pdf_sugestao_gc(produtos_df: pd.DataFrame, consultor: str, loja: str, 
     são usados no desenho em si (o design da capa é deliberadamente limpo,
     sem identificação de loja) — ficam disponíveis na assinatura para quem
     monta o nome do arquivo de download a partir do mesmo lugar.
+
+    `imagem_modelo`: bytes já prontos (PNG/JPEG) da imagem de referência do
+    planograma, mesma usada na aba Conferência — quando informado, insere
+    uma página extra "Modelo" logo após a capa (Capa → Modelo → Produtos).
+    None quando a loja ainda não tem o arquivo de Modelo enviado — nesse
+    caso a página simplesmente não entra no PDF, sem nenhum aviso ali (o
+    aviso é feito à parte, na tela — ver app.py::_dialog_modelo_ausente).
     """
     largura, altura = A4
     logo_reader = _preparar_logo_circular(config.LOGO_PATH)
@@ -356,6 +449,9 @@ def gerar_pdf_sugestao_gc(produtos_df: pd.DataFrame, consultor: str, loja: str, 
     c = canvas.Canvas(buffer, pagesize=A4)
 
     _desenhar_capa(c, largura, altura, logo_reader)
+
+    if imagem_modelo:
+        _desenhar_pagina_modelo(c, largura, altura, logo_reader, subtitulo_ciclo, imagem_modelo)
 
     y_topo_area_tabela, linhas_por_pagina = _calcular_linhas_por_pagina(altura)
 
@@ -370,6 +466,7 @@ def gerar_pdf_sugestao_gc(produtos_df: pd.DataFrame, consultor: str, loja: str, 
             fim = inicio + linhas_por_pagina
             produtos_pagina = [
                 {
+                    "modulo_label": registro["modulo"] if pd.notna(registro["modulo"]) else "–",
                     "posicao_label": registro["posicao"] if pd.notna(registro["posicao"]) else "–",
                     "produto": registro["produto"],
                     "frentes_label": registro["frentes"] if pd.notna(registro["frentes"]) else "–",

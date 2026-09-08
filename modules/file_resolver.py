@@ -24,7 +24,12 @@ import unicodedata
 from dataclasses import dataclass
 
 import config
-from modules.storage.base import ItemPasta, OneDriveStorage, StorageError
+from modules.storage.base import (
+    ArquivoNaoEncontradoError,
+    ItemPasta,
+    OneDriveStorage,
+    StorageError,  # noqa: F401 (reexportado — outros módulos importam daqui)
+)
 
 
 class ArquivoObrigatorioAusenteError(Exception):
@@ -78,6 +83,7 @@ def localizar_arquivo(
     pasta_relativa: str,
     spec: dict,
     chave: str = "",
+    itens: list[ItemPasta] | None = None,
 ) -> ArquivoEncontrado | None:
     """Procura, dentro de `pasta_relativa`, um arquivo cujo nome (sem
     extensão, normalizado) bata com algum de spec['basenames'] e cuja
@@ -86,14 +92,27 @@ def localizar_arquivo(
     .xlsx). A comparação de nome ignora maiúsculas/minúsculas, acentos,
     espaços e traços.
 
+    `itens`: quando o CHAMADOR já tem a listagem da pasta em mãos (ex.:
+    porque vai resolver mais de um arquivo na mesma pasta na mesma
+    operação — ver app.py::_carregar_dados_loja), pode passá-la aqui pra
+    evitar uma chamada de rede redundante (storage.listar_pasta) por
+    arquivo procurado. Se None (padrão), lista a pasta normalmente.
+
     Retorna None se não encontrar e spec['obrigatorio'] for False.
     Levanta ArquivoObrigatorioAusenteError se não encontrar e
     spec['obrigatorio'] for True.
     """
-    try:
-        itens = storage.listar_pasta(pasta_relativa)
-    except StorageError:
-        itens = []
+    if itens is None:
+        try:
+            itens = storage.listar_pasta(pasta_relativa)
+        except ArquivoNaoEncontradoError:
+            # Pasta inexistente = ciclo sem nenhum arquivo ainda: seguir com
+            # lista vazia é o certo (arquivo opcional vira None, obrigatório
+            # vira ArquivoObrigatorioAusenteError com mensagem clara).
+            # Falha de REDE, por outro lado, NÃO cai aqui de propósito —
+            # tratá-la como "pasta vazia" faria o app dizer que o arquivo não
+            # foi enviado quando na verdade ele existe e só não deu pra ler.
+            itens = []
 
     basenames_normalizados = [_normalizar_nome(b) for b in spec["basenames"]]
     extensoes_aceitas = [e.lower() for e in spec["extensions"]]
@@ -153,7 +172,10 @@ def _pasta_contem_dados_de_loja(storage: OneDriveStorage, caminho: str) -> bool:
     exista subpasta de mês)."""
     try:
         itens = storage.listar_pasta(caminho)
-    except StorageError:
+    except ArquivoNaoEncontradoError:
+        # Pasta não existe = não é um ciclo. Falha de rede não entra aqui
+        # (propaga): responder "não é ciclo" numa queda de conexão faria a
+        # loja aparecer sem nenhum ciclo, como se não tivesse dado nenhum.
         return False
 
     nomes_base_normalizados = {
@@ -195,7 +217,9 @@ def listar_ciclos_analise(storage: OneDriveStorage, caminho_loja: str) -> list[s
 
     try:
         itens = storage.listar_pasta(caminho_loja)
-    except StorageError:
+    except ArquivoNaoEncontradoError:
+        # Loja sem pasta = sem ciclos. Falha de rede propaga (ver comentário
+        # em _pasta_contem_dados_de_loja).
         itens = []
 
     for item in itens:

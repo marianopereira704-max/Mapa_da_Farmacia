@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 import config
-from modules.storage import StorageError
+from modules.storage import ArquivoNaoEncontradoError, StorageError  # noqa: F401 (StorageError faz parte do contrato público deste módulo)
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +174,18 @@ def _detectar_fim_dos_dados_por_texto(df: pd.DataFrame, col_idx: int) -> pd.Data
 def carregar_mapa_farmacia(caminho_arquivo: str) -> pd.DataFrame:
     """Lê a planilha 'Lista de produtos' do Mapa da Farmácia de uma loja.
 
-    Retorna DataFrame com colunas: posicao, ean, produto, frentes.
+    Retorna DataFrame com colunas: modulo, posicao, ean, ean_original,
+    produto, frentes, chave_produto (identidade única por linha — ver
+    comentário na montagem dessa coluna, mais abaixo). Também expõe, em
+    resultado.attrs["colisoes_modulo_posicao"], as combinações de
+    (módulo, posição) usadas por mais de um produto — sinal de erro de
+    preenchimento na planilha (duas linhas reivindicando a mesma prateleira
+    física), pra quem quiser avisar o usuário (ver Upload, em app.py). Lista
+    vazia quando não há nenhuma colisão.
+
+    "Módulo" existe em TODOS os tamanhos de planograma exportados hoje
+    (mesmo o de 1 módulo só vem com a coluna preenchida com "1" em toda
+    linha) — por isso é tratado como obrigatório, igual EAN e Produto.
     """
     colunas_cfg = config.COLUNAS_MAPA_FARMACIA
     bruto = pd.read_excel(caminho_arquivo, header=None, dtype=object)
@@ -182,7 +193,7 @@ def carregar_mapa_farmacia(caminho_arquivo: str) -> pd.DataFrame:
     linha_cabecalho = _localizar_linha_cabecalho(bruto, list(colunas_cfg.values()))
     mapa_idx = _mapear_colunas(bruto.iloc[linha_cabecalho], colunas_cfg)
 
-    faltando = [k for k, v in mapa_idx.items() if v is None and k in ("ean", "produto")]
+    faltando = [k for k, v in mapa_idx.items() if v is None and k in ("ean", "produto", "modulo")]
     if faltando:
         raise PlanilhaInvalidaError(
             f"Colunas obrigatórias não encontradas no Mapa da Farmácia: {faltando}"
@@ -192,6 +203,7 @@ def carregar_mapa_farmacia(caminho_arquivo: str) -> pd.DataFrame:
     dados = _detectar_fim_dos_dados_por_texto(dados, mapa_idx["produto"])
 
     resultado = pd.DataFrame({
+        "modulo": dados.iloc[:, mapa_idx["modulo"]].astype(str).str.strip().values,
         "posicao": dados.iloc[:, mapa_idx["posicao"]].values if mapa_idx["posicao"] is not None else None,
         "ean": dados.iloc[:, mapa_idx["ean"]].apply(normalizar_ean).values,
         "ean_original": dados.iloc[:, mapa_idx["ean"]].astype(str).str.strip().values,
@@ -203,6 +215,101 @@ def carregar_mapa_farmacia(caminho_arquivo: str) -> pd.DataFrame:
     # ele só não vai conseguir ser cruzado com estoque/demanda (a UI
     # sinaliza isso separadamente, sem esconder o produto do consultor).
     resultado = resultado.reset_index(drop=True)
+
+    # "Posição" reinicia em cada módulo (ex.: módulo 1 vai de 1 a 20, módulo
+    # 2 também começa do 1) — só faz sentido como identificador de
+    # prateleira física quando combinada com o módulo. chave_modulo_posicao
+    # é essa combinação, calculada uma vez e usada tanto pra detectar
+    # colisão real (abaixo) quanto pra desempatar EAN inválido duplicado.
+    chave_modulo_posicao = list(zip(resultado["modulo"], resultado["posicao"]))
+
+    # Colisão real: duas (ou mais) linhas reivindicando a MESMA prateleira
+    # física (mesmo módulo + mesma posição) — indica erro de preenchimento
+    # da planilha (ex.: linha copiada e colada sem atualizar o número),
+    # independente do EAN ser válido ou não. Isso nunca deveria acontecer
+    # numa planilha bem preenchida, então é reportado pra quem fez o
+    # upload decidir o que fazer (ver attrs, consumido em app.py).
+    colisoes_modulo_posicao = []
+    serie_chave = pd.Series(chave_modulo_posicao, index=resultado.index)
+    for chave, indices in serie_chave.groupby(serie_chave).groups.items():
+        if len(indices) > 1:
+            colisoes_modulo_posicao.append({
+                "modulo": chave[0],
+                "posicao": chave[1],
+                "produtos": resultado.loc[indices, "produto"].tolist(),
+            })
+    resultado.attrs["colisoes_modulo_posicao"] = colisoes_modulo_posicao
+
+    # Desempate de EAN inválido duplicado: quando duas ou mais linhas não
+    # têm um código de barras utilizável (célula vazia, texto solto, etc.),
+    # todas caem no mesmo "ean_original" (ex.: "nan"). Esse campo é usado
+    # como IDENTIDADE do produto sempre que o EAN é inválido — na tela de
+    # Ajuste de Mix, ao montar a chave do widget, ao salvar o ajuste em
+    # ajuste_mix.json e ao recarregar o que foi salvo (ver
+    # montar_tabela_sugestao_gc/montar_tabela_resultado_acao, que cruzam por
+    # ean_original). Duas linhas com o mesmo ean_original colidiam: o
+    # Streamlit quebrava (chave de widget duplicada) e, pior, a quantidade
+    # de um produto sobrescrevia a do outro ao salvar, silenciosamente.
+    #
+    # O desempate usa (módulo, posição) — NUNCA só posição, porque posição
+    # sozinha se repete entre módulos (ver nota acima) e não desambiguaria
+    # nada numa loja com mais de um módulo. Produtos com EAN válido, ou com
+    # EAN inválido mas já único, saem daqui exatamente como entraram.
+    sem_ean_valido = resultado["ean"].isna()
+    duplicado = resultado["ean_original"].duplicated(keep=False) & sem_ean_valido
+    for idx in resultado.index[duplicado]:
+        modulo_val, posicao_val = chave_modulo_posicao[idx]
+        rotulo = (
+            f"módulo {modulo_val}, posição {posicao_val}"
+            if pd.notna(posicao_val)
+            else f"módulo {modulo_val}, linha {idx + 1}"
+        )
+        resultado.at[idx, "ean_original"] = f'{resultado.at[idx, "ean_original"]} ({rotulo})'
+
+    # Rede de segurança final: se a própria planilha tiver uma colisão real
+    # de (módulo, posição) — ver colisoes_modulo_posicao acima — e as linhas
+    # envolvidas também tiverem EAN inválido, o desempate acima produz o
+    # mesmo texto pras duas (mesmo módulo + mesma posição = mesmo rótulo).
+    # Aqui garantimos unicidade de qualquer forma, anexando o número da
+    # linha — sem isso o app ainda quebraria nesse caso bem específico.
+    ainda_duplicado = resultado["ean_original"].duplicated(keep=False) & sem_ean_valido
+    for idx in resultado.index[ainda_duplicado]:
+        resultado.at[idx, "ean_original"] = f'{resultado.at[idx, "ean_original"]} [linha {idx + 1}]'
+
+    # ---- chave_produto: identidade única POR LINHA, usada em app.py como
+    # chave de widget/estado do Ajuste de Mix e como chave salva/recuperada
+    # em ajuste_mix.json. NUNCA usada para cruzar com estoque/demanda (isso
+    # continua sendo só a coluna "ean", intocada aqui).
+    #
+    # Regra-base idêntica à que o app.py já calculava inline antes desta
+    # coluna existir: ean_original quando o EAN é inválido (já desambiguado
+    # acima), ean normalizado caso contrário. Pra esmagadora maioria das
+    # lojas (sem produto duplicado) o valor sai IDÊNTICO ao que já era
+    # usado — é isso que mantém ajuste_mix.json salvos antes desta mudança
+    # compatíveis, sem precisar de nenhuma migração.
+    #
+    # Mas um EAN VÁLIDO também pode se repetir em duas linhas — cenário
+    # real num planograma multi-módulo (o mesmo produto pode ganhar
+    # destaque/facings extras em mais de um módulo). Sem desambiguar esse
+    # caso também, o Streamlit quebra (StreamlitDuplicateElementKey) — o
+    # mesmo defeito que já resolvemos acima pra EAN inválido, só que com
+    # outra causa.
+    resultado["chave_produto"] = resultado.apply(
+        lambda r: r["ean_original"] if pd.isna(r["ean"]) else r["ean"], axis=1
+    )
+    duplicado_chave = resultado["chave_produto"].duplicated(keep=False)
+    for idx in resultado.index[duplicado_chave]:
+        modulo_val, posicao_val = chave_modulo_posicao[idx]
+        rotulo = (
+            f"módulo {modulo_val}, posição {posicao_val}"
+            if pd.notna(posicao_val)
+            else f"módulo {modulo_val}, linha {idx + 1}"
+        )
+        resultado.at[idx, "chave_produto"] = f'{resultado.at[idx, "chave_produto"]} ({rotulo})'
+    ainda_duplicado_chave = resultado["chave_produto"].duplicated(keep=False)
+    for idx in resultado.index[ainda_duplicado_chave]:
+        resultado.at[idx, "chave_produto"] = f'{resultado.at[idx, "chave_produto"]} [linha {idx + 1}]'
+
     return resultado
 
 
@@ -418,6 +525,14 @@ def carregar_base_nacional(fonte, extensao: str | None = None) -> pd.DataFrame:
     dados = dados.dropna(subset=["ean"]).reset_index(drop=True)
     dados["demanda"] = pd.to_numeric(dados["demanda"], errors="coerce").fillna(0)
 
+    # Se um mesmo EAN aparecer mais de uma vez, soma a demanda (defensivo —
+    # mesmo padrão de carregar_estoque/carregar_retrato_vendas. Sem isso,
+    # EAN duplicado aqui faz mapa_df.merge(base_df, on="ean") em
+    # montar_tabela_ajuste_mix virar um merge muitos-para-um, multiplicando
+    # linhas do Mapa da Farmácia e reintroduzindo colisão de chave_produto
+    # mesmo quando carregar_mapa_farmacia não tem nenhum problema).
+    dados = dados.groupby("ean", as_index=False)["demanda"].sum()
+
     return dados
 
 
@@ -618,8 +733,8 @@ def carregar_estoque_resultado(caminho_arquivo: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def _posicao_ordenavel(v):
-    """Converte o valor de 'posicao' para uma chave numérica de ordenação.
-    Posições não numéricas (ou ausentes) vão para o final."""
+    """Converte o valor de 'modulo' ou 'posicao' para uma chave numérica de
+    ordenação. Valores não numéricos (ou ausentes) vão para o final."""
     try:
         return int(str(v).strip())
     except (TypeError, ValueError):
@@ -627,13 +742,25 @@ def _posicao_ordenavel(v):
 
 
 def _ordenar_por_posicao(tabela: pd.DataFrame) -> pd.DataFrame:
-    """Reordena um DataFrame pela coluna 'posicao' (ordem da gôndola no
-    Mapa da Farmácia), com posições não numéricas jogadas para o final.
-    Usada tanto no Ajuste de Mix quanto na Sugestão de GC, para que as
-    duas telas sigam sempre a mesma ordem física de prateleira."""
+    """Reordena um DataFrame por (módulo, posição) — nessa ordem de
+    prioridade: primeiro agrupa por módulo (módulo 1 inteiro antes de
+    qualquer posição do módulo 2), e dentro de cada módulo ordena por
+    posição. Módulo/posição não numéricos (ou ausentes) vão para o final.
+
+    Necessário porque "posição" sozinha REINICIA a cada módulo (posição 1
+    existe uma vez por módulo) — ordenar só por posição intercalaria
+    produtos de módulos diferentes. Usada no Ajuste de Mix, na Sugestão de
+    GC e no Resultado da ação, para que as três telas sigam sempre a mesma
+    ordem física de prateleira.
+    """
     tabela = tabela.copy()
-    tabela["_ordem"] = tabela["posicao"].apply(_posicao_ordenavel)
-    tabela = tabela.sort_values("_ordem").drop(columns="_ordem").reset_index(drop=True)
+    tabela["_ordem_modulo"] = tabela["modulo"].apply(_posicao_ordenavel)
+    tabela["_ordem_posicao"] = tabela["posicao"].apply(_posicao_ordenavel)
+    tabela = (
+        tabela.sort_values(["_ordem_modulo", "_ordem_posicao"])
+        .drop(columns=["_ordem_modulo", "_ordem_posicao"])
+        .reset_index(drop=True)
+    )
     return tabela
 
 
@@ -669,8 +796,9 @@ def montar_tabela_ajuste_mix(
     posição original do Mapa da Farmácia (gôndola), não pelo ranking.
 
     Colunas de saída:
-      posicao, ean, ean_original, ean_valido, produto, frentes, estoque,
-      demanda, quantidade_sugerida, origem ("auto" | None), quantidade
+      modulo, posicao, ean, ean_original, chave_produto, ean_valido,
+      produto, frentes, estoque, demanda, quantidade_sugerida,
+      origem ("auto" | None), quantidade
     """
     tabela = mapa_df.merge(base_df, on="ean", how="left")
     tabela = tabela.merge(estoque_df, on="ean", how="left")
@@ -724,7 +852,7 @@ def montar_tabela_ajuste_mix(
     tabela = _ordenar_por_posicao(tabela)
 
     return tabela[[
-        "posicao", "ean", "ean_original", "ean_valido", "produto", "frentes",
+        "modulo", "posicao", "ean", "ean_original", "chave_produto", "ean_valido", "produto", "frentes",
         "estoque", "demanda", "quantidade_sugerida", "origem", "quantidade",
     ]]
 
@@ -736,14 +864,22 @@ def montar_tabela_ajuste_mix(
 def carregar_ajuste_mix_salvo(storage, caminho_ciclo: str) -> dict | None:
     """Lê o ajuste_mix.json salvo (se existir) para a loja/ciclo informado.
 
-    Retorna None se o arquivo ainda não existe (consultor não salvou nada
-    ainda nesta loja/ciclo) — não é um erro, é um estado válido que a UI
-    trata mostrando uma mensagem própria, em vez de quebrar a página.
+    Retorna None APENAS quando o arquivo realmente não existe (consultor
+    não salvou nada ainda nesta loja/ciclo) — não é um erro, é um estado
+    válido que a UI trata mostrando uma mensagem própria, em vez de
+    quebrar a página.
+
+    Falha de rede/timeout NÃO retorna None: propaga como StorageError.
+    Antes isso caía no mesmo `return None`, e o resultado era o app
+    afirmar "Nenhum ajuste de mix salvo ainda para esta loja" numa queda
+    de conexão — mentindo sobre um ajuste que existe, e ainda sugerindo
+    que o consultor refizesse o trabalho. Melhor a tela mostrar um erro
+    de verdade do que um estado falso e convincente.
     """
     caminho = f"{caminho_ciclo}/ajuste_mix.json"
     try:
         conteudo = storage.ler_arquivo_bytes(caminho)
-    except StorageError:
+    except ArquivoNaoEncontradoError:
         return None
     return json.loads(conteudo)
 
@@ -752,31 +888,44 @@ def montar_tabela_sugestao_gc(mapa_df: pd.DataFrame, ajuste_salvo: dict | None) 
     """Cruza os produtos salvos no ajuste de mix (quantidade > 0) com o
     Mapa da Farmácia, para obter posição e frentes de cada um.
 
-    O cruzamento é feito por ean_original — presente em ambas as fontes e
-    sempre preenchido, diferente de 'ean' (que é None para produtos com
-    EAN inválido, mas que ainda assim precisam aparecer aqui se foram
-    salvos no ajuste de mix). Produtos do ajuste salvo que não forem mais
-    encontrados no mapa_df atual (ex.: o mapa_farmacia mudou desde o
-    último save) são ignorados silenciosamente na tabela retornada — a
-    lista deles fica disponível em `resultado.attrs["produtos_nao_encontrados"]`
-    (lista de dicts com ean_original/quantidade) para quem quiser avisar o
-    usuário, sem que isso mude o uso principal (quem só quer o DataFrame
-    continua chamando a função exatamente como antes).
+    O cruzamento é feito por chave_produto — a identidade única por linha
+    calculada em carregar_mapa_farmacia (ean quando válido, ean_original
+    quando não, desambiguada por módulo/posição em caso de repetição). É o
+    MESMO valor usado por app.py como chave ao salvar cada produto em
+    ajuste_mix.json (lá gravado no campo "ean_original" do arquivo, por
+    compatibilidade com o formato já usado antes desta coluna existir —
+    ver comentário em carregar_mapa_farmacia). Produtos do ajuste salvo que
+    não forem mais encontrados no mapa_df atual (ex.: o mapa_farmacia
+    mudou desde o último save) são ignorados silenciosamente na tabela
+    retornada — a lista deles fica disponível em
+    `resultado.attrs["produtos_nao_encontrados"]` (lista de dicts com
+    ean_original/quantidade) para quem quiser avisar o usuário, sem que
+    isso mude o uso principal (quem só quer o DataFrame continua chamando
+    a função exatamente como antes).
 
-    Retorna DataFrame com colunas: posicao, ean_original, produto, frentes,
-    quantidade, ean_valido — ordenado pela posição original (mesma lógica
-    de _ordenar_por_posicao usada em montar_tabela_ajuste_mix). Se
-    `ajuste_salvo` for None (ou não tiver produtos), retorna um DataFrame
-    vazio com essas mesmas colunas.
+    Retorna DataFrame com colunas: modulo, posicao, ean_original,
+    chave_produto, produto, frentes, quantidade, ean_valido — ordenado por
+    (módulo, posição) (mesma lógica de _ordenar_por_posicao usada em
+    montar_tabela_ajuste_mix). Se `ajuste_salvo` for None (ou não tiver
+    produtos), retorna um DataFrame vazio com essas mesmas colunas.
     """
-    colunas_saida = ["posicao", "ean_original", "produto", "frentes", "quantidade", "ean_valido"]
+    colunas_saida = [
+        "modulo", "posicao", "ean_original", "chave_produto", "produto", "frentes", "quantidade", "ean_valido",
+    ]
 
     if not ajuste_salvo or not ajuste_salvo.get("produtos"):
         vazio = pd.DataFrame(columns=colunas_saida)
         vazio.attrs["produtos_nao_encontrados"] = []
         return vazio
 
-    produtos_salvos = pd.DataFrame(ajuste_salvo["produtos"])[["ean_original", "quantidade"]]
+    # O campo gravado no JSON chama-se "ean_original" por compatibilidade
+    # de formato (ver carregar_mapa_farmacia), mas o valor que ele guarda é
+    # a chave_produto usada no momento do save — renomeamos aqui pra
+    # cruzar corretamente com a coluna chave_produto de mapa_df.
+    produtos_salvos = (
+        pd.DataFrame(ajuste_salvo["produtos"])[["ean_original", "quantidade"]]
+        .rename(columns={"ean_original": "chave_produto"})
+    )
 
     # mapa_df (saída crua de carregar_mapa_farmacia) não tem 'ean_valido'
     # pronto — essa coluna só existe na tabela já enriquecida do Ajuste de
@@ -784,14 +933,15 @@ def montar_tabela_sugestao_gc(mapa_df: pd.DataFrame, ajuste_salvo: dict | None) 
     mapa_com_validade = mapa_df.assign(ean_valido=mapa_df["ean"].notna())
 
     tabela = produtos_salvos.merge(
-        mapa_com_validade[["posicao", "ean_original", "produto", "frentes", "ean_valido"]],
-        on="ean_original",
+        mapa_com_validade[["modulo", "posicao", "ean_original", "chave_produto", "produto", "frentes", "ean_valido"]],
+        on="chave_produto",
         how="left",
         indicator=True,
     )
 
     nao_encontrados = (
-        tabela[tabela["_merge"] == "left_only"][["ean_original", "quantidade"]]
+        tabela[tabela["_merge"] == "left_only"][["chave_produto", "quantidade"]]
+        .rename(columns={"chave_produto": "ean_original"})
         .to_dict("records")
     )
     tabela = tabela[tabela["_merge"] == "both"].drop(columns="_merge").reset_index(drop=True)
@@ -851,10 +1001,10 @@ def montar_tabela_resultado_acao(
       "novo"               — vendeu no período mas não estava no Estoque
                              "antes" (produto novo na loja)
 
-    Retorna DataFrame com colunas: posicao, ean_original, ean, ean_valido,
-    produto, frentes, status, unidades_antes, valor_unitario_antes,
-    faturamento_antes, unidades_depois, faturamento_depois,
-    crescimento_rs, crescimento_pct. Também expõe, em
+    Retorna DataFrame com colunas: modulo, posicao, ean_original, ean,
+    ean_valido, produto, frentes, status, unidades_antes,
+    valor_unitario_antes, faturamento_antes, unidades_depois,
+    faturamento_depois, crescimento_rs, crescimento_pct. Também expõe, em
     resultado.attrs["produtos_nao_encontrados"], os itens do ajuste_mix
     salvo que não foram mais encontrados no Mapa da Farmácia atual (mesma
     convenção de montar_tabela_sugestao_gc). Se `ajuste_salvo` for None
@@ -862,7 +1012,7 @@ def montar_tabela_resultado_acao(
     colunas.
     """
     colunas_saida = [
-        "posicao", "ean_original", "ean", "ean_valido", "produto", "frentes", "status",
+        "modulo", "posicao", "ean_original", "ean", "ean_valido", "produto", "frentes", "status",
         "unidades_antes", "valor_unitario_antes", "faturamento_antes",
         "unidades_depois", "faturamento_depois", "crescimento_rs", "crescimento_pct",
     ]
@@ -872,20 +1022,29 @@ def montar_tabela_resultado_acao(
         vazio.attrs["produtos_nao_encontrados"] = []
         return vazio
 
-    produtos_salvos = pd.DataFrame(ajuste_salvo["produtos"])[["ean_original", "quantidade"]]
+    # O campo gravado no JSON chama-se "ean_original" por compatibilidade
+    # de formato (ver carregar_mapa_farmacia), mas o valor que ele guarda é
+    # a chave_produto usada no momento do save — renomeamos aqui pra
+    # cruzar corretamente com a coluna chave_produto de mapa_df (ver mesmo
+    # comentário em montar_tabela_sugestao_gc).
+    produtos_salvos = (
+        pd.DataFrame(ajuste_salvo["produtos"])[["ean_original", "quantidade"]]
+        .rename(columns={"ean_original": "chave_produto"})
+    )
     mapa_com_validade = mapa_df.assign(ean_valido=mapa_df["ean"].notna())
 
     base = produtos_salvos.merge(
-        mapa_com_validade[["posicao", "ean_original", "produto", "frentes", "ean_valido", "ean"]],
-        on="ean_original",
+        mapa_com_validade[["modulo", "posicao", "ean_original", "chave_produto", "produto", "frentes", "ean_valido", "ean"]],
+        on="chave_produto",
         how="left",
         indicator=True,
     )
     nao_encontrados = (
-        base[base["_merge"] == "left_only"][["ean_original", "quantidade"]]
+        base[base["_merge"] == "left_only"][["chave_produto", "quantidade"]]
+        .rename(columns={"chave_produto": "ean_original"})
         .to_dict("records")
     )
-    base = base[base["_merge"] == "both"].drop(columns=["_merge", "quantidade"]).reset_index(drop=True)
+    base = base[base["_merge"] == "both"].drop(columns=["_merge", "quantidade", "chave_produto"]).reset_index(drop=True)
     base = _ordenar_por_posicao(base)
 
     # ---- Cálculo do "antes" ----
@@ -948,6 +1107,7 @@ def montar_tabela_resultado_acao(
         novos_df = novos_df.merge(info_produto, on="ean", how="left")
         novos_df["produto"] = novos_df["produto"].fillna("Produto não identificado no Mapa da Farmácia")
         novos = pd.DataFrame({
+            "modulo": None,
             "posicao": None,
             "ean_original": novos_df["ean"],
             "ean": novos_df["ean"],

@@ -134,6 +134,7 @@ EAN_MAX_DIGITOS = 14
 # ---------------------------------------------------------------------------
 
 COLUNAS_MAPA_FARMACIA = {
+    "modulo": "Módulo",
     "posicao": "Posição",
     "ean": "EAN",
     "produto": "Produto",

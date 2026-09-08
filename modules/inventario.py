@@ -11,6 +11,7 @@ st.cache_data) fica por conta de quem chama (app.py), não deste módulo.
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 import config
 from modules.file_resolver import _normalizar_nome
@@ -113,6 +114,13 @@ def descobrir_inventario(storage: OneDriveStorage) -> dict:
     # feita depois, pra já ter certeza de que o ciclo existe no dict
     # (independente da ordem em que os caminhos vieram de
     # listar_todos_arquivos, que não é garantida).
+    #
+    # Em PARALELO (ThreadPoolExecutor) — cada leitura é uma chamada de
+    # rede independente (I/O-bound, libera o GIL), e sequencialmente isso
+    # já chegou a medir 3,2s com 22 metadata.json no bucket real, crescendo
+    # linearmente com o número de ciclos. Paralelizado, o tempo total fica
+    # perto do da chamada mais lenta, não da SOMA de todas.
+    alvos = []
     for caminho in caminhos:
         partes = caminho.split("/")
         if len(partes) < 3:
@@ -122,15 +130,33 @@ def descobrir_inventario(storage: OneDriveStorage) -> dict:
             continue
         if nome_arquivo.lower() != NOME_ARQUIVO_METADATA:
             continue
+        alvos.append((loja, ciclo, caminho))
 
+    def _ler_metadata(alvo):
+        loja, ciclo, caminho = alvo
         try:
             conteudo = storage.ler_arquivo_bytes(caminho)
-            inventario[loja][ciclo]["metadata"] = json.loads(conteudo)
+            return loja, ciclo, json.loads(conteudo)
         except (StorageError, ValueError):
-            # metadata.json corrompido ou ilegível -- não é motivo pra
-            # derrubar a descoberta do inventário inteiro, só fica sem
-            # metadata pra esse ciclo (mesmo tratamento de ciclo antigo
-            # pré-migração, que nunca teve metadata.json).
-            pass
+            # metadata.json corrompido, ausente OU ilegível por falha de
+            # rede -- não é motivo pra derrubar a descoberta do inventário
+            # inteiro, só fica sem metadata pra esse ciclo (mesmo tratamento
+            # de ciclo antigo pré-migração, que nunca teve metadata.json).
+            #
+            # Aqui engolir falha de rede é DELIBERADO, diferente dos outros
+            # pontos do app (ver file_resolver/carregar_ajuste_mix_salvo, que
+            # só engolem ArquivoNaoEncontradoError): o metadata é decorativo
+            # — nome do consultor no cabeçalho e rótulo de mês do "depois",
+            # ambos com fallback. Nenhuma decisão do app depende dele, então
+            # degradar em silêncio aqui não mente pro usuário sobre dado que
+            # importa; derrubar a tela inteira de seleção de loja, sim, seria
+            # desproporcional.
+            return loja, ciclo, None
+
+    if alvos:
+        with ThreadPoolExecutor(max_workers=min(20, len(alvos))) as executor:
+            for loja, ciclo, metadata in executor.map(_ler_metadata, alvos):
+                if metadata is not None:
+                    inventario[loja][ciclo]["metadata"] = metadata
 
     return inventario
