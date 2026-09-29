@@ -266,6 +266,50 @@ rodando com dados reais.
   alguém precisa rodar `scripts/preparar_base_nacional.py` localmente e
   então subir o `.parquet` resultante pela Seção B da aba Upload — não há
   automação/agendamento desse passo.
+- **Ajuste de mix / Sugestão de GC não refletem uma correção de
+  mapa_farmacia/estoque feita no meio da mesma sessão do navegador**
+  (investigado em 2026-09-24, a partir de um caso real na loja 1255: o
+  consultor enviou o estoque errado, depois substituiu pelo correto — a
+  substituição em si funciona (confirmado via `head_object` no S3: o
+  arquivo novo está lá, com timestamp certo), mas as duas telas
+  continuaram mostrando os números de antes). Duas causas, uma em cada
+  tela:
+  - **Sugestão de GC** (`pagina_sugestao_gc`, `dl.carregar_ajuste_mix_salvo`)
+    não é um cálculo ao vivo — é sempre uma foto do último `ajuste_mix.json`
+    salvo. Isso é intencional, não bug: ela só volta a bater com o estoque
+    atual depois que o consultor reabre Ajuste de mix e clica em "Salvar"
+    de novo. Mas hoje a tela não avisa quando o ajuste salvo é mais antigo
+    que o upload mais recente do ciclo — o consultor não tem como saber,
+    olhando só pra ela, que o que está vendo é uma foto desatualizada.
+  - **Ajuste de mix** (`pagina_ajuste_mix`, `app.py`) é o problema mais
+    sério: `st.session_state[chave_estado]` (as quantidades editáveis) só é
+    inicializado na PRIMEIRA vez que a loja/ciclo é aberta naquela sessão
+    do navegador (`if chave_estado not in st.session_state: ...`). Nada no
+    código reseta essa chave depois — nem a correção de um arquivo via
+    "Sim, substituir" (aba Upload), nem reentrar na Análise pelo cartão de
+    ciclo (só `_gc_modelo_aviso_ciclo_visto` é resetado ali). Resultado: se
+    o consultor corrige um arquivo SEM fechar a aba do navegador, a tela de
+    Ajuste de mix continua mostrando (e permitindo salvar de novo) as
+    quantidades calculadas a partir do dado ERRADO, mesmo com o
+    `tabela_base` interno já recalculado corretamente a partir do arquivo
+    novo (o cache de dados em si — `_carregar_dados_loja` — é invalidado
+    certinho ao trocar de grupo de página; o problema é só esse dicionário
+    em session_state, que vive fora desse mecanismo de cache).
+  - **Reprodutível em qualquer loja**, não é específico da 1255 — a
+    sequência é: abrir Ajuste de mix → ir em Upload e substituir
+    mapa_farmacia/estoque → voltar pra Análise na MESMA sessão (sem F5/
+    fechar a aba). Um F5 completo contorna o problema (cria sessão nova,
+    `chave_estado` é reinicializado do zero), o que provavelmente explica
+    por que não foi percebido antes.
+  - **Direção de correção sugerida (não implementada ainda)**: limpar
+    `st.session_state.pop(f"ajuste_mix::{loja}::{ciclo}", None)` no
+    momento em que mapa_farmacia ou estoque desse loja/ciclo são
+    substituídos (aba Upload, os dois pontos que tratam "Sim, substituir"
+    e o envio sem conflito) — mesmo padrão já usado para
+    `_gc_modelo_aviso_ciclo_visto`. Complementar: mostrar um aviso em
+    Sugestão de GC quando `metadata.json.enviado_em` for mais recente que
+    o `ajuste_mix.json` salvo, avisando que o ajuste pode estar
+    desatualizado.
 
 ## Como rodar localmente
 

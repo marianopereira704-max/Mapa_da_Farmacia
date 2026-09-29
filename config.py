@@ -145,7 +145,11 @@ COLUNAS_ESTOQUE = {
     "id_loja": "Id lojas",
     "ean": "Cód. barras",
     "produto": "Produto",
-    "estoque": "Unidades em estoque",
+    # Lista = nomes alternativos aceitos pra mesma coluna (algumas
+    # exportações abreviam "Unidades" como "Und."/"Und") — qualquer um dos
+    # três é reconhecido, na ordem declarada aqui. Suporte implementado em
+    # modules/data_loader.py::_localizar_linha_cabecalho/_mapear_colunas.
+    "estoque": ["Unidades em estoque", "Und. em estoque", "Und em estoque"],
 }
 
 COLUNAS_BASE_NACIONAL = {

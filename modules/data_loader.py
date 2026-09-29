@@ -83,17 +83,38 @@ def normalizar_ean(valor) -> str | None:
 # Detecção dinâmica de cabeçalho
 # ---------------------------------------------------------------------------
 
+# Cada entrada de um dicionário COLUNAS_* (config.py) pode ser um nome único
+# (str) ou uma lista de nomes ALTERNATIVOS pra mesma coluna lógica (ex.:
+# planilhas de origem diferentes chamando "estoque" de "Unidades em
+# estoque", "Und. em estoque" ou "Und em estoque") — qualquer um deles é
+# aceito, o primeiro que bater com uma coluna real da planilha vence.
+NomeColuna = str | list[str]
+
+
+def _nomes_possiveis(valor: NomeColuna) -> list[str]:
+    """Normaliza uma entrada de COLUNAS_* (um nome único ou uma lista de
+    alternativas) para sempre uma lista de nomes candidatos, na ordem de
+    preferência declarada em config.py."""
+    return [valor] if isinstance(valor, str) else list(valor)
+
+
 def _localizar_linha_cabecalho(
-    df_bruto: pd.DataFrame, colunas_esperadas: list[str], min_matches: int = 2
+    df_bruto: pd.DataFrame, colunas_esperadas: dict[str, NomeColuna], min_matches: int = 2
 ) -> int:
     """Procura, dentro das primeiras linhas do arquivo, a linha que contém
     o maior número de colunas esperadas (comparação case-insensitive e sem
-    espaço nas pontas). Retorna o índice dessa linha.
+    espaço nas pontas — e, quando uma coluna tem nomes alternativos,
+    QUALQUER um deles conta). Retorna o índice dessa linha.
+
+    `colunas_esperadas` é o dicionário {chave_interna: nome(s)} inteiro
+    (não só os valores) — precisa dele completo, e não só de uma lista
+    achatada, pra poder expandir cada entrada nos seus alternativos.
 
     Levanta PlanilhaInvalidaError se nenhuma linha atingir o mínimo de
     colunas coincidentes.
     """
-    alvo = {c.strip().lower() for c in colunas_esperadas}
+    todos_nomes = [nome for valor in colunas_esperadas.values() for nome in _nomes_possiveis(valor)]
+    alvo = {c.strip().lower() for c in todos_nomes}
     limite_busca = min(30, len(df_bruto))
 
     melhor_linha = None
@@ -113,16 +134,22 @@ def _localizar_linha_cabecalho(
     if melhor_linha is None or melhor_score < min_matches:
         raise PlanilhaInvalidaError(
             f"Não foi possível localizar o cabeçalho esperado "
-            f"({colunas_esperadas}) nas primeiras {limite_busca} linhas do arquivo."
+            f"({todos_nomes}) nas primeiras {limite_busca} linhas do arquivo."
         )
 
     return melhor_linha
 
 
-def _mapear_colunas(header_row: pd.Series, colunas_esperadas: dict[str, str]) -> dict[str, int]:
+def _mapear_colunas(header_row: pd.Series, colunas_esperadas: dict[str, NomeColuna]) -> dict[str, int]:
     """Dado o conteúdo da linha de cabeçalho e um dicionário
-    {chave_interna: nome_da_coluna_na_planilha}, retorna
+    {chave_interna: nome(s)_da_coluna_na_planilha}, retorna
     {chave_interna: índice_da_coluna}.
+
+    Quando uma coluna tem mais de um nome aceito (lista, em vez de string),
+    testa cada um NA ORDEM declarada em config.py e usa o primeiro que
+    bater — pensado pra planilhas de origem que abreviam o nome da coluna
+    de formas diferentes conforme a exportação (ex.: "Unidades em estoque"
+    vs. "Und. em estoque").
 
     Se um nome de coluna aparecer mais de uma vez (ex.: "YTD'26" duplicado
     na base nacional), retorna sempre a primeira ocorrência (mais à
@@ -132,12 +159,13 @@ def _mapear_colunas(header_row: pd.Series, colunas_esperadas: dict[str, str]) ->
     valores = [str(v).strip().lower() if v is not None else "" for v in header_row.tolist()]
     mapa = {}
     for chave, nome_coluna in colunas_esperadas.items():
-        alvo = nome_coluna.strip().lower()
-        try:
-            idx = valores.index(alvo)
-        except ValueError:
-            mapa[chave] = None
-            continue
+        idx = None
+        for nome in _nomes_possiveis(nome_coluna):
+            try:
+                idx = valores.index(nome.strip().lower())
+                break
+            except ValueError:
+                continue
         mapa[chave] = idx
     return mapa
 
@@ -190,7 +218,7 @@ def carregar_mapa_farmacia(caminho_arquivo: str) -> pd.DataFrame:
     colunas_cfg = config.COLUNAS_MAPA_FARMACIA
     bruto = pd.read_excel(caminho_arquivo, header=None, dtype=object)
 
-    linha_cabecalho = _localizar_linha_cabecalho(bruto, list(colunas_cfg.values()))
+    linha_cabecalho = _localizar_linha_cabecalho(bruto, colunas_cfg)
     mapa_idx = _mapear_colunas(bruto.iloc[linha_cabecalho], colunas_cfg)
 
     faltando = [k for k, v in mapa_idx.items() if v is None and k in ("ean", "produto", "modulo")]
@@ -329,7 +357,7 @@ def carregar_estoque(caminho_arquivo: str) -> pd.DataFrame:
     colunas_cfg = config.COLUNAS_ESTOQUE
     bruto = pd.read_excel(caminho_arquivo, header=None, dtype=object)
 
-    linha_cabecalho = _localizar_linha_cabecalho(bruto, list(colunas_cfg.values()))
+    linha_cabecalho = _localizar_linha_cabecalho(bruto, colunas_cfg)
     mapa_idx = _mapear_colunas(bruto.iloc[linha_cabecalho], colunas_cfg)
 
     faltando = [k for k, v in mapa_idx.items() if v is None and k in ("ean", "estoque")]
@@ -394,7 +422,7 @@ def carregar_base_nacional_bruta(caminho_arquivo: str) -> pd.DataFrame:
     colunas_cfg = config.COLUNAS_BASE_NACIONAL
     bruto = pd.read_excel(caminho_arquivo, header=None, dtype=object)
 
-    linha_cabecalho = _localizar_linha_cabecalho(bruto, list(colunas_cfg.values()))
+    linha_cabecalho = _localizar_linha_cabecalho(bruto, colunas_cfg)
     mapa_idx = _mapear_colunas(bruto.iloc[linha_cabecalho], colunas_cfg)
 
     faltando = [k for k, v in mapa_idx.items() if v is None and k in ("ean", "demanda")]
@@ -565,7 +593,7 @@ def carregar_retrato_vendas(caminho_arquivo: str) -> pd.DataFrame:
     colunas_cfg = config.COLUNAS_RETRATO_VENDAS
     bruto = pd.read_excel(caminho_arquivo, header=None, dtype=object)
 
-    linha_cabecalho = _localizar_linha_cabecalho(bruto, list(colunas_cfg.values()))
+    linha_cabecalho = _localizar_linha_cabecalho(bruto, colunas_cfg)
     mapa_idx = _mapear_colunas(bruto.iloc[linha_cabecalho], colunas_cfg)
 
     faltando = [k for k, v in mapa_idx.items() if v is None]
@@ -681,7 +709,7 @@ def carregar_estoque_resultado(caminho_arquivo: str) -> pd.DataFrame:
     colunas_cfg = config.COLUNAS_ESTOQUE_RESULTADO
     bruto = pd.read_excel(caminho_arquivo, header=None, dtype=object)
 
-    linha_cabecalho = _localizar_linha_cabecalho(bruto, list(colunas_cfg.values()))
+    linha_cabecalho = _localizar_linha_cabecalho(bruto, colunas_cfg)
     mapa_idx = _mapear_colunas(bruto.iloc[linha_cabecalho], colunas_cfg)
 
     faltando = [k for k, v in mapa_idx.items() if v is None and k != "id_loja"]
