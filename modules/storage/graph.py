@@ -136,6 +136,18 @@ class GraphAPIStorage(OneDriveStorage):
         resposta = requests.get(url, headers=self._headers(), timeout=30)
         return resposta.status_code == 200
 
+    def apagar_arquivo(self, caminho_relativo: str) -> None:
+        caminho_encoded = caminho_relativo.strip("/")
+        url = f"{GRAPH_BASE_URL}/drives/{self.drive_id}/root:/{caminho_encoded}"
+        resposta = requests.delete(url, headers=self._headers(), timeout=30)
+        # 204 = apagado. 404 = já não existia — tratado como sucesso
+        # (idempotente, mesma convenção dos outros backends).
+        if resposta.status_code not in (204, 404):
+            raise StorageError(
+                f"Falha ao apagar arquivo '{caminho_relativo}': "
+                f"{resposta.status_code} — {resposta.text}"
+            )
+
     def listar_todos_arquivos(self, prefixo: str = "") -> list[str]:
         # Implementação RECURSIVA (1 chamada de rede por subpasta, via
         # listar_pasta) — aceitável aqui porque este backend não é mais o

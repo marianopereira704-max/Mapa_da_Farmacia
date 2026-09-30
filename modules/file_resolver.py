@@ -78,6 +78,68 @@ def _dividir_nome_extensao(nome_arquivo: str) -> tuple[str, str]:
 # Localização de arquivo dentro de uma pasta
 # ---------------------------------------------------------------------------
 
+def localizar_item(
+    storage: OneDriveStorage,
+    pasta_relativa: str,
+    spec: dict,
+    itens: list[ItemPasta] | None = None,
+) -> ItemPasta | None:
+    """Mesma lógica de correspondência de localizar_arquivo() (nome
+    normalizado + extensão, na ordem de preferência de spec['extensions']),
+    mas sem ler o conteúdo do arquivo encontrado.
+
+    Usado quando só interessa SABER se um arquivo existe e qual o caminho
+    dele — ex.: a checagem de conflito de upload em app.py, que não deve
+    baixar o arquivo antigo inteiro (podendo ser uma foto de vários MB) só
+    pra descobrir se já existe algo pra aquela chave. localizar_arquivo()
+    usa esta função por baixo e só lê os bytes se algo for encontrado.
+
+    `itens`: ver docstring de localizar_arquivo().
+    """
+    if itens is None:
+        try:
+            itens = storage.listar_pasta(pasta_relativa)
+        except ArquivoNaoEncontradoError:
+            # Pasta inexistente = ciclo sem nenhum arquivo ainda — seguir
+            # com lista vazia é o certo. Falha de REDE não cai aqui de
+            # propósito (propaga) — ver mesma observação em
+            # _pasta_contem_dados_de_loja.
+            itens = []
+
+    basenames_normalizados = [_normalizar_nome(b) for b in spec["basenames"]]
+    extensoes_aceitas = [e.lower() for e in spec["extensions"]]
+
+    # Mapa: nome_base_normalizado -> {extensao: ItemPasta}
+    candidatos: dict[str, dict[str, ItemPasta]] = {}
+    for item in itens:
+        if item.e_pasta:
+            continue
+        base, ext = _dividir_nome_extensao(item.nome)
+        base_norm = _normalizar_nome(base)
+        candidatos.setdefault(base_norm, {})[ext] = item
+
+    # 1a passada: correspondência EXATA do nome normalizado (mais segura —
+    # evita, por exemplo, confundir "estoque_pmf_backup" com "estoque").
+    for extensao in extensoes_aceitas:
+        for base_norm in basenames_normalizados:
+            item = candidatos.get(base_norm, {}).get(extensao)
+            if item is not None:
+                return item
+
+    # 2a passada: o nome esperado aparece DENTRO do nome do arquivo — cobre
+    # variações como "estoque da loja.xlsx" ou "mapa_farmacia_loja1188.xlsx",
+    # onde o consultor acrescentou palavras extras ao nome padrão.
+    for extensao in extensoes_aceitas:
+        for nome_base_arquivo, exts in candidatos.items():
+            item = exts.get(extensao)
+            if item is None:
+                continue
+            if any(base_norm in nome_base_arquivo for base_norm in basenames_normalizados):
+                return item
+
+    return None
+
+
 def localizar_arquivo(
     storage: OneDriveStorage,
     pasta_relativa: str,
@@ -102,58 +164,15 @@ def localizar_arquivo(
     Levanta ArquivoObrigatorioAusenteError se não encontrar e
     spec['obrigatorio'] for True.
     """
-    if itens is None:
-        try:
-            itens = storage.listar_pasta(pasta_relativa)
-        except ArquivoNaoEncontradoError:
-            # Pasta inexistente = ciclo sem nenhum arquivo ainda: seguir com
-            # lista vazia é o certo (arquivo opcional vira None, obrigatório
-            # vira ArquivoObrigatorioAusenteError com mensagem clara).
-            # Falha de REDE, por outro lado, NÃO cai aqui de propósito —
-            # tratá-la como "pasta vazia" faria o app dizer que o arquivo não
-            # foi enviado quando na verdade ele existe e só não deu pra ler.
-            itens = []
-
-    basenames_normalizados = [_normalizar_nome(b) for b in spec["basenames"]]
-    extensoes_aceitas = [e.lower() for e in spec["extensions"]]
-
-    # Mapa: nome_base_normalizado -> {extensao: ItemPasta}
-    candidatos: dict[str, dict[str, ItemPasta]] = {}
-    for item in itens:
-        if item.e_pasta:
-            continue
-        base, ext = _dividir_nome_extensao(item.nome)
-        base_norm = _normalizar_nome(base)
-        candidatos.setdefault(base_norm, {})[ext] = item
-
-    # 1a passada: correspondência EXATA do nome normalizado (mais segura —
-    # evita, por exemplo, confundir "estoque_pmf_backup" com "estoque").
-    for extensao in extensoes_aceitas:
-        for base_norm in basenames_normalizados:
-            item = candidatos.get(base_norm, {}).get(extensao)
-            if item is not None:
-                conteudo = storage.ler_arquivo_bytes(item.caminho_completo)
-                return ArquivoEncontrado(
-                    caminho_relativo=item.caminho_completo,
-                    extensao=extensao,
-                    conteudo=conteudo,
-                )
-
-    # 2a passada: o nome esperado aparece DENTRO do nome do arquivo — cobre
-    # variações como "estoque da loja.xlsx" ou "mapa_farmacia_loja1188.xlsx",
-    # onde o consultor acrescentou palavras extras ao nome padrão.
-    for extensao in extensoes_aceitas:
-        for nome_base_arquivo, exts in candidatos.items():
-            item = exts.get(extensao)
-            if item is None:
-                continue
-            if any(base_norm in nome_base_arquivo for base_norm in basenames_normalizados):
-                conteudo = storage.ler_arquivo_bytes(item.caminho_completo)
-                return ArquivoEncontrado(
-                    caminho_relativo=item.caminho_completo,
-                    extensao=extensao,
-                    conteudo=conteudo,
-                )
+    item = localizar_item(storage, pasta_relativa, spec, itens=itens)
+    if item is not None:
+        _, extensao = _dividir_nome_extensao(item.nome)
+        conteudo = storage.ler_arquivo_bytes(item.caminho_completo)
+        return ArquivoEncontrado(
+            caminho_relativo=item.caminho_completo,
+            extensao=extensao,
+            conteudo=conteudo,
+        )
 
     if spec.get("obrigatorio"):
         raise ArquivoObrigatorioAusenteError(chave, pasta_relativa)

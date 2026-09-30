@@ -75,13 +75,31 @@ class OneDriveStorage(ABC):
 
     @abstractmethod
     def escrever_arquivo_bytes(self, caminho_relativo: str, conteudo: bytes) -> None:
-        """Escreve/sobrescreve um arquivo. Usado apenas para salvar o
-        ajuste_mix.json (Aba 1) — nenhuma outra escrita acontece no OneDrive.
-        """
+        """Escreve/sobrescreve um arquivo (ajuste_mix.json, metadata.json,
+        base nacional tratada, arquivos enviados pela aba Upload, previews
+        do Modelo — todas as escritas do app passam por aqui)."""
 
     @abstractmethod
     def existe(self, caminho_relativo: str) -> bool:
         """Verifica se um arquivo ou pasta existe, sem levantar exceção."""
+
+    @abstractmethod
+    def apagar_arquivo(self, caminho_relativo: str) -> None:
+        """Remove um arquivo do armazenamento.
+
+        Usado quando um upload "substitui" um arquivo que tinha extensão
+        DIFERENTE da nova (ex.: "foto_antes.jpg" reenviada como
+        "foto_antes.png") — como o caminho muda com a extensão, escrever o
+        novo arquivo sozinho deixaria os dois coexistindo, e a busca por
+        extensão (ver file_resolver.localizar_arquivo) sempre acharia o
+        mais antigo primeiro, fazendo a "substituição" nunca aparecer na
+        tela. Ver app.py, pontos que tratam "Sim, substituir" e envio sem
+        conflito.
+
+        IDEMPOTENTE: apagar um caminho que já não existe NÃO é erro (mesma
+        convenção de `rm -f`) — quem chama não precisa checar existência
+        antes.
+        """
 
     @abstractmethod
     def listar_todos_arquivos(self, prefixo: str = "") -> list[str]:

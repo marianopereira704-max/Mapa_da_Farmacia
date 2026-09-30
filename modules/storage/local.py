@@ -81,6 +81,13 @@ class LocalFolderStorage(OneDriveStorage):
     def existe(self, caminho_relativo: str) -> bool:
         return self._caminho_absoluto(caminho_relativo).exists()
 
+    def apagar_arquivo(self, caminho_relativo: str) -> None:
+        caminho = self._caminho_absoluto(caminho_relativo)
+        try:
+            caminho.unlink(missing_ok=True)
+        except OSError as e:
+            raise StorageError(f"Falha ao apagar arquivo {caminho_relativo}: {e}") from e
+
     def listar_todos_arquivos(self, prefixo: str = "") -> list[str]:
         # Listagem recursiva de sistema de arquivos é barata — não precisa
         # de nenhuma otimização especial aqui (diferente do backend Spaces,

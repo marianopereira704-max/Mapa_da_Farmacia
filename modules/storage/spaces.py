@@ -224,6 +224,18 @@ class DigitalOceanSpacesStorage(OneDriveStorage):
             # conflito de upload, que decide sobrescrever com base neste retorno).
             raise StorageError(f"Falha de rede ao verificar existência de '{caminho_relativo}': {e}") from e
 
+    def apagar_arquivo(self, caminho_relativo: str) -> None:
+        chave = self._chave(caminho_relativo)
+        try:
+            # delete_object do S3/Spaces já é idempotente por natureza:
+            # devolve 204 tanto se apagou quanto se a chave já não existia
+            # — não há um "404" aqui para tratar como ArquivoNaoEncontradoError.
+            self._cliente.delete_object(Bucket=self.bucket, Key=chave)
+        except ClientError as e:
+            raise StorageError(f"Falha ao apagar arquivo '{caminho_relativo}': {e}") from e
+        except BotoCoreError as e:
+            raise StorageError(f"Falha de rede ao apagar arquivo '{caminho_relativo}': {e}") from e
+
     def listar_todos_arquivos(self, prefixo: str = "") -> list[str]:
         # SEM Delimiter -- list_objects_v2 retorna TODOS os objetos sob o
         # prefixo de uma vez (achatado, sem estrutura de pastas), em vez de

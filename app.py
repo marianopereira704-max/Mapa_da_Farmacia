@@ -43,7 +43,7 @@ import modules.inventario as inventario
 import modules.lojas_api as lojas_api
 import modules.pdf_export as pdf_export
 import modules.styles as styles
-from modules.file_resolver import ArquivoObrigatorioAusenteError, localizar_arquivo
+from modules.file_resolver import ArquivoObrigatorioAusenteError, localizar_arquivo, localizar_item
 from modules.storage import ArquivoNaoEncontradoError, StorageError, get_storage_client
 from streamlit_searchbox import st_searchbox
 
@@ -931,13 +931,34 @@ def pagina_upload() -> None:
                 # reruns dos cliques em "Sim"/"Não").
                 conflitos = {}
                 sem_conflito = {}
+                caminho_ciclo_upload = f"{loja_limpa}/{ano_mes}"
+                try:
+                    itens_ciclo_upload = storage.listar_pasta(caminho_ciclo_upload)
+                except ArquivoNaoEncontradoError:
+                    itens_ciclo_upload = []
                 for chave, arquivo in arquivos_preenchidos.items():
                     nome_base = config.FILE_SPECS[chave]["basenames"][0]
                     extensao = Path(arquivo.name).suffix.lower()
-                    caminho_destino = f"{loja_limpa}/{ano_mes}/{nome_base}{extensao}"
+                    caminho_destino = f"{caminho_ciclo_upload}/{nome_base}{extensao}"
                     conteudo = arquivo.getvalue()
-                    if storage.existe(caminho_destino):
-                        conflitos[chave] = {"caminho": caminho_destino, "conteudo": conteudo}
+                    # Conflito = já existe um arquivo desta chave em
+                    # QUALQUER extensão aceita (não só na extensão do
+                    # arquivo enviado agora) — senão reenviar "foto_antes"
+                    # com extensão diferente da anterior (a câmera do
+                    # celular decide o formato, não o consultor) não detecta
+                    # conflito nenhum: os dois arquivos ficam coexistindo no
+                    # storage, e como localizar_arquivo() sempre resolve pra
+                    # extensão de maior prioridade, a "substituição" nunca
+                    # aparece nas telas seguintes (Conferência etc.).
+                    item_existente = localizar_item(
+                        storage, caminho_ciclo_upload, config.FILE_SPECS[chave], itens=itens_ciclo_upload
+                    )
+                    if item_existente is not None:
+                        conflitos[chave] = {
+                            "caminho": caminho_destino,
+                            "conteudo": conteudo,
+                            "caminho_antigo": item_existente.caminho_completo,
+                        }
                     else:
                         sem_conflito[chave] = {"caminho": caminho_destino, "conteudo": conteudo}
 
@@ -1010,6 +1031,21 @@ def pagina_upload() -> None:
             if c1.button("Sim, substituir", key=f"upload_conflito_sim_{chave}"):
                 try:
                     storage.escrever_arquivo_bytes(info["caminho"], info["conteudo"])
+                    caminho_antigo = info.get("caminho_antigo")
+                    if caminho_antigo and caminho_antigo != info["caminho"]:
+                        # A extensão mudou entre o arquivo antigo e o novo
+                        # (ex.: foto_antes.jpg -> foto_antes.png) — sem
+                        # apagar o antigo, os dois ficam coexistindo e
+                        # localizar_arquivo() sempre volta pro mais antigo
+                        # primeiro (prioridade de extensão), fazendo a
+                        # "substituição" nunca aparecer na tela.
+                        try:
+                            storage.apagar_arquivo(caminho_antigo)
+                        except StorageError as e:
+                            st.warning(
+                                f"{_ROTULOS_ARQUIVOS_UPLOAD[chave]} foi substituído, mas não foi "
+                                f"possível remover o arquivo antigo ({caminho_antigo}): {e}"
+                            )
                     _atualizar_metadata_ciclo(
                         storage, loja_pend, ano_mes_pend,
                         st.session_state.get("_upload_consultor_pendente", ""),
