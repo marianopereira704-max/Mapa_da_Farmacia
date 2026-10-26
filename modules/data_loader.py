@@ -942,7 +942,7 @@ def montar_tabela_sugestao_gc(mapa_df: pd.DataFrame, ajuste_salvo: dict | None) 
     ]
 
     if not ajuste_salvo or not ajuste_salvo.get("produtos"):
-        vazio = pd.DataFrame(columns=colunas_saida)
+        vazio = pd.DataFrame(columns=colunas_saida).astype({"ean_valido": bool})
         vazio.attrs["produtos_nao_encontrados"] = []
         return vazio
 
@@ -977,6 +977,10 @@ def montar_tabela_sugestao_gc(mapa_df: pd.DataFrame, ajuste_salvo: dict | None) 
     tabela = _ordenar_por_posicao(tabela)
 
     resultado = tabela[colunas_saida].copy()
+    # O merge "left" injeta NaN em ean_valido para itens não encontrados, o
+    # que deixa a coluna com dtype object mesmo após filtrar só os "both".
+    # Com object, `~coluna` vira inteiro e quebra o filtro booleano na UI.
+    resultado["ean_valido"] = resultado["ean_valido"].astype(bool)
     resultado.attrs["produtos_nao_encontrados"] = nao_encontrados
     return resultado
 
