@@ -29,7 +29,7 @@ from __future__ import annotations
 import io
 import json
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -509,7 +509,10 @@ def _atualizar_metadata_ciclo(
 
     if consultor:
         metadata_atual["consultor"] = consultor
-    metadata_atual["enviado_em"] = datetime.now().isoformat(timespec="seconds")
+    # UTC com offset explícito (+00:00): o servidor do Streamlit Cloud roda
+    # em UTC, e um horário "ingênuo" fica ambíguo pra quem lê depois (ex.:
+    # relatório mensal, que converte pra horário de Brasília).
+    metadata_atual["enviado_em"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if retrato_vendas_enviado:
         metadata_atual["retrato_vendas_ano_mes"] = date.today().strftime("%Y-%m")
 

@@ -150,6 +150,17 @@ _Base/
   escolhido antes de navegar. Ciclos antigos, de antes dessa mudança, não
   têm `metadata.json` — o app trata isso graciosamente (omite o consultor
   do cabeçalho, não aparece no filtro) em vez de quebrar.
+- **`enviado_em` é sempre gravado em UTC, com o offset explícito**
+  (ex.: `2026-10-26T13:40:36+00:00`, via `datetime.now(timezone.utc)` em
+  `app.py:_atualizar_metadata_ciclo`). Nunca usar `datetime.now()` sem
+  fuso: o servidor do Streamlit Cloud roda em UTC, então um horário
+  "ingênuo" sai 3h adiantado em relação a Brasília e fica impossível de
+  distinguir de um gravado localmente. Registros anteriores a 2026-10-26
+  não têm offset — quem lê deve tratá-los como UTC. A conversão para
+  horário de Brasília acontece **só na exibição** (ver
+  `scripts/relatorio_mensal.py:_formatar_data`, que usa offset fixo UTC-3,
+  sem depender do pacote `tzdata`). Qualquer tela nova que mostre ou
+  compare `enviado_em` deve seguir a mesma regra.
 - Os nomes-base e extensões aceitos por tipo de arquivo estão centralizados
   em `config.FILE_SPECS` (e `config.BASE_NACIONAL_SPEC` para a base
   nacional) — é o único lugar do código que precisa mudar se um novo tipo
@@ -238,6 +249,47 @@ do DigitalOcean Spaces existirem. Ao contrário de `data/sample/` e
 Ver [`dados_demo/LEIA-ME.md`](dados_demo/LEIA-ME.md) para os detalhes —
 inclusive **quando e como remover essa pasta** assim que o app estiver
 rodando com dados reais.
+
+## Relatório mensal de conferência
+
+`scripts/relatorio_mensal.py` gera um `.xlsx` por ciclo com todas as
+lojas que enviaram algo naquele mês: dados da loja (API do TI), último
+envio, checklist de Mapa/Estoque/Modelo e miniaturas das fotos Antes e
+Depois. Roda localmente, lendo `.streamlit/secrets.toml`:
+
+```bash
+python scripts/relatorio_mensal.py --mes 2026-10
+# saída: relatorios/relatorio_conferencia_2026-10.xlsx (sobrescreve se já existir)
+```
+
+O relatório é uma **foto do storage no momento em que foi gerado** — um
+upload feito depois não aparece nele. Antes de investigar uma loja que
+"está errada no relatório", gere de novo e compare com o conteúdo real da
+pasta `{loja}/{AAAA-MM}/` no storage.
+
+## Armadilhas já encontradas
+
+Problemas reais que já quebraram o app ou geraram dado errado — vale
+checar estes pontos antes de mexer nas partes envolvidas.
+
+- **Horário de envio 3h adiantado** (2026-10-26, loja 566): `enviado_em`
+  era gravado com `datetime.now()` sem fuso, que no Streamlit Cloud é UTC,
+  e o relatório exibia direto. Regra adotada: gravar sempre em UTC com
+  offset e converter só na exibição — ver a seção de convenções acima.
+- **`KeyError` na Sugestão de GC** (2026-10-26, loja 1173): em
+  `data_loader.montar_tabela_sugestao_gc`, o `merge(how="left")` com o
+  mapa atual injeta `NaN` em `ean_valido` para produtos do ajuste salvo
+  que não existem mais no mapa. Mesmo depois de filtrar só as linhas
+  `"both"`, a coluna continua com dtype `object`, e `~coluna` em `object`
+  devolve inteiros (`-1`/`-2`) em vez de booleanos — o pandas passa a
+  tratá-los como nomes de coluna e lança `KeyError`. Correção: forçar
+  `.astype(bool)` antes de devolver. **Regra geral**: toda coluna
+  booleana que passa por um `merge(how="left")` precisa voltar a `bool`
+  antes de ser usada com `~` ou como máscara. `montar_tabela_resultado_acao`
+  tem um merge parecido e ainda não foi revisado com esse olhar.
+- **"Loja está errada no relatório"** (2026-10-26, loja 566): o relatório
+  havia sido gerado antes do último upload da loja. Não era bug — ver
+  seção Relatório mensal de conferência.
 
 ## Pendências conhecidas
 

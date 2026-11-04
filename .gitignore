@@ -6,6 +6,10 @@ venv/
 data/onedrive_simulado/
 data/sample/
 
+# Relatórios gerados por scripts/relatorio_mensal.py — saída local,
+# pode conter fotos de lojas/dados operacionais, não é código.
+relatorios/
+
 # Pastas de IDE/editor e arquivos de sistema operacional — não têm nada a
 # ver com o projeto em si, só variam de máquina para máquina.
 .vscode/

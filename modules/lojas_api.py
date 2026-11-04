@@ -41,15 +41,17 @@ class LojasAPIError(Exception):
 
 @dataclass
 class Loja:
-    """Uma loja devolvida pela API do TI. `nome`, `consultor` e
-    `supervisora` podem vir None se a API não os informar para aquela
-    loja em particular — só `codigo` é garantido (itens sem código
-    utilizável são descartados em obter_lojas(), nunca viram um objeto
-    Loja "quebrado")."""
+    """Uma loja devolvida pela API do TI. `nome`, `nome_fantasia`,
+    `razao_social`, `consultor` e `supervisora` podem vir None se a API
+    não os informar para aquela loja em particular — só `codigo` é
+    garantido (itens sem código utilizável são descartados em
+    obter_lojas(), nunca viram um objeto Loja "quebrado")."""
     codigo: str
-    nome: str | None
+    nome: str | None  # fantasyName, com fallback para businessName — uso existente (ex.: rótulo do searchbox de Upload)
     consultor: str | None
     supervisora: str | None
+    nome_fantasia: str | None = None  # fantasyName puro, sem fallback (ex.: relatório mensal, que quer as duas colunas separadas)
+    razao_social: str | None = None  # businessName puro (titular do CNPJ) — idem
 
 
 # Nomes de campo confirmados contra uma resposta real da API (endpoint
@@ -122,6 +124,8 @@ def obter_lojas(url: str, api_key: str, timeout: int = 15) -> list[Loja]:
             nome=_primeiro_valor(item, _CAMPOS_NOME),
             consultor=_pessoa_do_setor(item, _SETOR_CONSULTOR),
             supervisora=_pessoa_do_setor(item, _SETOR_SUPERVISORA),
+            nome_fantasia=item.get("fantasyName") or None,
+            razao_social=item.get("businessName") or None,
         ))
     return lojas
 
