@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -61,6 +62,19 @@ auth.exigir_autenticacao()
 # ---------------------------------------------------------------------------
 
 def obter_storage():
+    # O objeto guardado na sessão sobrevive a um deploy (o Streamlit
+    # recarrega os módulos, mas quem já estava com o app aberto mantém o
+    # session_state) — e continua sendo uma instância da classe ANTIGA, sem
+    # os métodos novos (ex.: AttributeError em
+    # listar_todos_arquivos_com_versao logo após o deploy de nov/2026).
+    # Recria quando a classe com esse nome no módulo atual não é mais a do
+    # objeto guardado.
+    storage_salvo = st.session_state.get("storage")
+    if storage_salvo is not None:
+        classe_salva = type(storage_salvo)
+        classe_atual = getattr(sys.modules.get(classe_salva.__module__), classe_salva.__name__, None)
+        if classe_atual is not classe_salva:
+            st.session_state["_storage_stale"] = True
     if "storage" not in st.session_state or st.session_state.get("_storage_stale"):
         try:
             st.session_state["storage"] = get_storage_client(dict(st.secrets))
