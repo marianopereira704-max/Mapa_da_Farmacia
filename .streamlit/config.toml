@@ -1,0 +1,4 @@
+# Tema fixo: as cores do app são pensadas para fundo claro, então o modo
+# escuro do computador do usuário não pode trocar o fundo.
+[theme]
+base = "light"

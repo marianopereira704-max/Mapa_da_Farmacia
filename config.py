@@ -290,5 +290,5 @@ RAIO_CAMPO_LOJA_CONSULTOR_PX = 8
 BORDA_CAMPO_LOJA_CONSULTOR = "#E4E7EB"  # mesma cor de borda usada nos cartões (.mdf-painel-marker etc.)
 FUNDO_CAMPO_LOJA_CONSULTOR = "#FFFFFF"
 TEXTO_CAMPO_LOJA_CONSULTOR = "#31333F"  # cor de texto padrão do Streamlit (tema claro)
-PLACEHOLDER_CAMPO_LOJA_CONSULTOR = "#8A93A3"  # mesmo cinza usado em .mdf-produto-meta/.mdf-foto-vazio
+PLACEHOLDER_CAMPO_LOJA_CONSULTOR = "#6B7280"  # mesmo cinza usado em .mdf-produto-meta/.mdf-foto-vazio
 FONTE_CAMPO_LOJA_CONSULTOR_PX = 14

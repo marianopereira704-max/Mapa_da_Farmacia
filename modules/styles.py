@@ -434,7 +434,7 @@ def aplicar_estilo() -> None:
         }}
 
         .mdf-produto-nome {{ font-size: 14px; color: #1A1A1A; margin: 4px 0 0 0; }}
-        .mdf-produto-meta {{ font-size: 12px; color: #8A93A3; margin: 0; }}
+        .mdf-produto-meta {{ font-size: 12px; color: #6B7280; margin: 0; }}
 
         /* ---- Controles de paginação (Ajuste de mix / Sugestão de GC /
         Produto a produto) — texto central "Página X de Y". Os botões
@@ -665,7 +665,7 @@ def aplicar_estilo() -> None:
         }}
         .mdf-foto-vazio {{
             font-size: 13px;
-            color: #8A93A3;
+            color: #6B7280;
             text-align: center;
             margin: 0;
             padding: 0 12px;
