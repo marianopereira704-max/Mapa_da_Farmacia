@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 
 import pandas as pd
 
@@ -274,7 +275,7 @@ def carregar_mapa_farmacia(caminho_arquivo: str) -> pd.DataFrame:
     # como IDENTIDADE do produto sempre que o EAN é inválido — na tela de
     # Ajuste de Mix, ao montar a chave do widget, ao salvar o ajuste em
     # ajuste_mix.json e ao recarregar o que foi salvo (ver
-    # montar_tabela_sugestao_gc/montar_tabela_resultado_acao, que cruzam por
+    # montar_tabela_sugestao_gc, que cruza por
     # ean_original). Duas linhas com o mesmo ean_original colidiam: o
     # Streamlit quebrava (chave de widget duplicada) e, pior, a quantidade
     # de um produto sobrescrevia a do outro ao salvar, silenciosamente.
@@ -578,7 +579,7 @@ def carregar_retrato_vendas(caminho_arquivo: str) -> pd.DataFrame:
     arquivos reais: Quantidade nunca é zero). Um produto ausente aqui
     significa "não teve venda no mês", não "não existe" — por isso a
     feature usa um segundo arquivo (Estoque atualizado, ver
-    carregar_estoque em conjunto com montar_tabela_resultado_acao) para
+    carregar_estoque_atualizado_resultado em conjunto com resultado_acao.montar_resultado_acao) para
     diferenciar esse caso de um produto que realmente saiu do mix.
 
     Retorna DataFrame com colunas: ean, quantidade_vendida, valor_vendido.
@@ -691,6 +692,67 @@ def carregar_retrato_vendas(caminho_arquivo: str) -> pd.DataFrame:
     return resultado
 
 
+_DATA_BR = r"(\d{1,2})/(\d{1,2})/(\d{4})"
+
+
+def _data_br(texto: str) -> date:
+    dia, mes, ano = (int(p) for p in re.fullmatch(_DATA_BR, texto).groups())
+    return date(ano, mes, dia)
+
+
+def extrair_periodo_retrato(caminho_arquivo) -> tuple[date, date] | None:
+    """Lê o período de vendas do Retrato de Vendas a partir do bloco
+    "Filtros aplicados" que o dashboard de origem coloca no rodapé do
+    export. Formato real (confirmado em arquivo de produção):
+
+        Data é igual a ou está depois de 01/07/2026 e está antes de 01/08/2026
+
+    Retorna (primeiro_dia, ultimo_dia), AMBOS inclusive — no exemplo,
+    (2026-07-01, 2026-07-31). Limite com "igual a ou" é inclusive; sem,
+    é exclusivo (ajustado em 1 dia).
+
+    Retorna None — nunca adivinha — se não houver bloco de filtros, se a
+    linha "Data ..." não existir ou estiver num formato não reconhecido,
+    ou se o período resultante for inválido (fim antes do início). Quem
+    chama decide o que fazer nesse caso (a página Upload pergunta o mês
+    ao consultor).
+    """
+    try:
+        bruto = pd.read_excel(caminho_arquivo, header=None, dtype=object)
+    except Exception:
+        return None
+
+    for valor in bruto.to_numpy().ravel():
+        if not isinstance(valor, str) or "filtros aplicados" not in valor.lower():
+            continue
+        for linha in valor.splitlines():
+            linha = linha.strip()
+            if not re.match(r"(?i)data\b", linha):
+                continue
+            # "Data é 05/07/2026" — um único dia.
+            unico = re.fullmatch(rf"(?i)data é {_DATA_BR}", linha)
+            if unico:
+                dia = _data_br("/".join(unico.groups()))
+                return dia, dia
+            inicio_m = re.search(rf"(?i)(igual a ou )?está depois de (\d{{1,2}}/\d{{1,2}}/\d{{4}})", linha)
+            fim_m = re.search(rf"(?i)(igual a ou )?está antes de (\d{{1,2}}/\d{{1,2}}/\d{{4}})", linha)
+            if not inicio_m or not fim_m:
+                return None
+            try:
+                inicio = _data_br(inicio_m.group(2))
+                fim = _data_br(fim_m.group(2))
+            except ValueError:
+                return None  # data impossível (ex.: 31/02)
+            if not inicio_m.group(1):
+                inicio += timedelta(days=1)
+            if not fim_m.group(1):
+                fim -= timedelta(days=1)
+            if fim < inicio:
+                return None
+            return inicio, fim
+    return None
+
+
 def carregar_estoque_resultado(caminho_arquivo: str) -> pd.DataFrame:
     """Lê a planilha de Estoque (o MESMO arquivo "antes" já usado no
     Ajuste de Mix) capturando também as colunas de venda dos últimos 3
@@ -754,6 +816,75 @@ def carregar_estoque_resultado(caminho_arquivo: str) -> pd.DataFrame:
     )
 
     return resultado
+
+
+def _data_da_celula(valor) -> pd.Timestamp:
+    """Data de uma célula do Excel (data de verdade ou texto DD/MM/AAAA).
+    Vazio ou formato não reconhecido vira NaT, sem erro."""
+    if isinstance(valor, date):
+        return pd.Timestamp(valor)
+    texto = "" if valor is None else str(valor).strip()
+    if re.fullmatch(_DATA_BR, texto):
+        try:
+            return pd.Timestamp(_data_br(texto))
+        except ValueError:
+            return pd.NaT
+    return pd.NaT
+
+
+def carregar_estoque_atualizado_resultado(caminho_arquivo: str) -> pd.DataFrame:
+    """Lê o Estoque atualizado (o "depois") para o Resultado da ação: quanto
+    a loja tinha no fim do mês e quando comprou cada produto pela última vez.
+
+    Retorna DataFrame com colunas: ean, estoque, ultima_compra (NaT quando
+    o arquivo não tem a coluna ou o produto não tem data).
+
+    Levanta MultiplasLojasEstoqueError nas mesmas condições de
+    carregar_estoque().
+    """
+    colunas_cfg = config.COLUNAS_ESTOQUE_ATUALIZADO_RESULTADO
+    bruto = pd.read_excel(caminho_arquivo, header=None, dtype=object)
+
+    linha_cabecalho = _localizar_linha_cabecalho(bruto, colunas_cfg)
+    mapa_idx = _mapear_colunas(bruto.iloc[linha_cabecalho], colunas_cfg)
+
+    faltando = [k for k in ("ean", "estoque") if mapa_idx[k] is None]
+    if faltando:
+        raise PlanilhaInvalidaError(
+            f"Colunas obrigatórias não encontradas no Estoque atualizado: {faltando}"
+        )
+
+    dados = bruto.iloc[linha_cabecalho + 1:].copy()
+    estoque_numerico = pd.to_numeric(dados.iloc[:, mapa_idx["estoque"]], errors="coerce")
+    dados = dados[estoque_numerico.notna()].copy()
+
+    if mapa_idx["id_loja"] is not None:
+        ids_unicos = (
+            dados.iloc[:, mapa_idx["id_loja"]]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .unique()
+            .tolist()
+        )
+        if len(ids_unicos) > 1:
+            raise MultiplasLojasEstoqueError(ids_unicos)
+
+    resultado = pd.DataFrame({
+        "ean": dados.iloc[:, mapa_idx["ean"]].apply(normalizar_ean).values,
+        "estoque": pd.to_numeric(dados.iloc[:, mapa_idx["estoque"]], errors="coerce").values,
+        "ultima_compra": (
+            pd.to_datetime(dados.iloc[:, mapa_idx["ultima_compra"]].map(_data_da_celula)).values
+            if mapa_idx["ultima_compra"] is not None else pd.NaT
+        ),
+    })
+    resultado = resultado.dropna(subset=["ean"]).reset_index(drop=True)
+    resultado["ultima_compra"] = pd.to_datetime(resultado["ultima_compra"])
+
+    return resultado.groupby("ean", as_index=False).agg(
+        estoque=("estoque", "sum"),
+        ultima_compra=("ultima_compra", "max"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -981,187 +1112,5 @@ def montar_tabela_sugestao_gc(mapa_df: pd.DataFrame, ajuste_salvo: dict | None) 
     # que deixa a coluna com dtype object mesmo após filtrar só os "both".
     # Com object, `~coluna` vira inteiro e quebra o filtro booleano na UI.
     resultado["ean_valido"] = resultado["ean_valido"].astype(bool)
-    resultado.attrs["produtos_nao_encontrados"] = nao_encontrados
-    return resultado
-
-
-# ---------------------------------------------------------------------------
-# Montagem da tabela do Resultado da ação (Aba 3 — Conferência)
-# ---------------------------------------------------------------------------
-
-def montar_tabela_resultado_acao(
-    mapa_df: pd.DataFrame,
-    ajuste_salvo: dict | None,
-    estoque_resultado_df: pd.DataFrame,
-    retrato_df: pd.DataFrame,
-    estoque_atualizado_df: pd.DataFrame,
-) -> pd.DataFrame:
-    """Monta a tabela da feature "Resultado da ação" (Aba 3 — Conferência):
-    compara o faturamento mensal "antes" (calculado a partir do mesmo
-    Estoque já usado no Ajuste de Mix) com o "depois" (Retrato de Vendas),
-    produto a produto.
-
-    A base da lista é a mesma do ajuste de mix SALVO (ajuste_mix.json) —
-    mesma lógica de montar_tabela_sugestao_gc, incluindo a ordenação pela
-    posição de gôndola — e não a lista completa do Mapa da Farmácia: o
-    resultado só faz sentido para os produtos que o consultor efetivamente
-    decidiu acompanhar naquele ciclo. Produtos que tiveram venda no
-    Retrato mas NÃO estavam no Estoque "antes" são adicionados ao FINAL
-    da lista com status "novo" (sem posição de gôndola definida, já que
-    não faziam parte do ajuste original).
-
-    Cálculo do "antes" (por produto, a partir de estoque_resultado_df —
-    ver carregar_estoque_resultado):
-      preço médio         = Estoque venda (R$) ÷ Unidades em estoque
-      unidades vendidas/mês = Unidades vendidas (3 meses) ÷ 3
-      faturamento/mês     = unidades vendidas/mês × preço médio
-    Quando o estoque atual é 0, o preço médio não pode ser calculado por
-    essa fórmula — tratado como 0 (aproximação conservadora: sem
-    referência de estoque, não há como estimar o faturamento "antes"
-    desse produto a partir dela).
-
-    Status por produto:
-      "sem_dado"          — EAN não localizado (não dá pra cruzar nada)
-      "normal"            — teve venda no Retrato (cresceu, caiu ou ficou
-                             estável — a UI decide a partir dos números)
-      "sem_venda_periodo" — ausente do Retrato, mas o Estoque atualizado
-                             confirma que o produto continua em estoque
-                             (neutro — só não vendeu nesse mês, não saiu
-                             do mix)
-      "deixou_de_vender"  — ausente do Retrato E ausente/zerado no
-                             Estoque atualizado (saiu do mix de verdade)
-      "novo"               — vendeu no período mas não estava no Estoque
-                             "antes" (produto novo na loja)
-
-    Retorna DataFrame com colunas: modulo, posicao, ean_original, ean,
-    ean_valido, produto, frentes, status, unidades_antes,
-    valor_unitario_antes, faturamento_antes, unidades_depois,
-    faturamento_depois, crescimento_rs, crescimento_pct. Também expõe, em
-    resultado.attrs["produtos_nao_encontrados"], os itens do ajuste_mix
-    salvo que não foram mais encontrados no Mapa da Farmácia atual (mesma
-    convenção de montar_tabela_sugestao_gc). Se `ajuste_salvo` for None
-    (ou não tiver produtos), retorna um DataFrame vazio com essas mesmas
-    colunas.
-    """
-    colunas_saida = [
-        "modulo", "posicao", "ean_original", "ean", "ean_valido", "produto", "frentes", "status",
-        "unidades_antes", "valor_unitario_antes", "faturamento_antes",
-        "unidades_depois", "faturamento_depois", "crescimento_rs", "crescimento_pct",
-    ]
-
-    if not ajuste_salvo or not ajuste_salvo.get("produtos"):
-        vazio = pd.DataFrame(columns=colunas_saida)
-        vazio.attrs["produtos_nao_encontrados"] = []
-        return vazio
-
-    # O campo gravado no JSON chama-se "ean_original" por compatibilidade
-    # de formato (ver carregar_mapa_farmacia), mas o valor que ele guarda é
-    # a chave_produto usada no momento do save — renomeamos aqui pra
-    # cruzar corretamente com a coluna chave_produto de mapa_df (ver mesmo
-    # comentário em montar_tabela_sugestao_gc).
-    produtos_salvos = (
-        pd.DataFrame(ajuste_salvo["produtos"])[["ean_original", "quantidade"]]
-        .rename(columns={"ean_original": "chave_produto"})
-    )
-    mapa_com_validade = mapa_df.assign(ean_valido=mapa_df["ean"].notna())
-
-    base = produtos_salvos.merge(
-        mapa_com_validade[["modulo", "posicao", "ean_original", "chave_produto", "produto", "frentes", "ean_valido", "ean"]],
-        on="chave_produto",
-        how="left",
-        indicator=True,
-    )
-    nao_encontrados = (
-        base[base["_merge"] == "left_only"][["chave_produto", "quantidade"]]
-        .rename(columns={"chave_produto": "ean_original"})
-        .to_dict("records")
-    )
-    base = base[base["_merge"] == "both"].drop(columns=["_merge", "quantidade", "chave_produto"]).reset_index(drop=True)
-    base = _ordenar_por_posicao(base)
-
-    # ---- Cálculo do "antes" ----
-    base = base.merge(estoque_resultado_df, on="ean", how="left")
-    for col in ("estoque", "estoque_venda_rs", "unidades_vendidas_3m"):
-        base[col] = base[col].fillna(0)
-
-    base["valor_unitario_antes"] = base.apply(
-        lambda r: (r["estoque_venda_rs"] / r["estoque"]) if r["estoque"] > 0 else 0.0,
-        axis=1,
-    )
-    base["unidades_antes"] = base["unidades_vendidas_3m"] / 3
-    base["faturamento_antes"] = base["unidades_antes"] * base["valor_unitario_antes"]
-
-    # ---- Cálculo do "depois" ----
-    base = base.merge(
-        retrato_df.rename(columns={
-            "quantidade_vendida": "unidades_depois",
-            "valor_vendido": "faturamento_depois",
-        }),
-        on="ean",
-        how="left",
-        indicator="_em_retrato",
-    )
-    base["_ausente_no_retrato"] = base["_em_retrato"] == "left_only"
-    base["unidades_depois"] = base["unidades_depois"].fillna(0)
-    base["faturamento_depois"] = base["faturamento_depois"].fillna(0)
-
-    estoque_atualizado_por_ean = (
-        estoque_atualizado_df.set_index("ean")["estoque"]
-        if len(estoque_atualizado_df) else pd.Series(dtype=float)
-    )
-
-    def _status_linha(row):
-        if not row["ean_valido"]:
-            return "sem_dado"
-        if not row["_ausente_no_retrato"]:
-            return "normal"
-        estoque_atual = estoque_atualizado_por_ean.get(row["ean"], 0.0)
-        if estoque_atual and estoque_atual > 0:
-            return "sem_venda_periodo"
-        return "deixou_de_vender"
-
-    base["status"] = base.apply(_status_linha, axis=1)
-    base = base.drop(columns=["_em_retrato", "_ausente_no_retrato", "estoque", "estoque_venda_rs", "unidades_vendidas_3m"])
-
-    # ---- Produtos novos: venderam no período, mas não estavam no
-    # Estoque "antes" (nem já presentes na base acima) ----
-    eans_antes = set(estoque_resultado_df["ean"].dropna())
-    eans_base = set(base["ean"].dropna())
-    novos_df = retrato_df[
-        ~retrato_df["ean"].isin(eans_antes) & ~retrato_df["ean"].isin(eans_base)
-    ].copy()
-
-    if len(novos_df) > 0:
-        novos_df = novos_df.sort_values("valor_vendido", ascending=False)
-        info_produto = (
-            mapa_df.dropna(subset=["ean"]).drop_duplicates(subset="ean")[["ean", "produto", "frentes"]]
-        )
-        novos_df = novos_df.merge(info_produto, on="ean", how="left")
-        novos_df["produto"] = novos_df["produto"].fillna("Produto não identificado no Mapa da Farmácia")
-        novos = pd.DataFrame({
-            "modulo": None,
-            "posicao": None,
-            "ean_original": novos_df["ean"],
-            "ean": novos_df["ean"],
-            "ean_valido": True,
-            "produto": novos_df["produto"],
-            "frentes": novos_df.get("frentes"),
-            "status": "novo",
-            "unidades_antes": 0.0,
-            "valor_unitario_antes": 0.0,
-            "faturamento_antes": 0.0,
-            "unidades_depois": novos_df["quantidade_vendida"],
-            "faturamento_depois": novos_df["valor_vendido"],
-        })
-        base = pd.concat([base, novos], ignore_index=True)
-
-    # ---- Crescimento ----
-    base["crescimento_rs"] = base["faturamento_depois"] - base["faturamento_antes"]
-    base["crescimento_pct"] = base.apply(
-        lambda r: (r["crescimento_rs"] / r["faturamento_antes"] * 100) if r["faturamento_antes"] > 0 else None,
-        axis=1,
-    )
-
-    resultado = base[colunas_saida].reset_index(drop=True)
     resultado.attrs["produtos_nao_encontrados"] = nao_encontrados
     return resultado

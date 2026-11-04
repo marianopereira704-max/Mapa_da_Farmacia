@@ -30,7 +30,7 @@ import io
 import json
 import sys
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -43,6 +43,8 @@ import modules.image_utils as image_utils
 import modules.inventario as inventario
 import modules.lojas_api as lojas_api
 import modules.pdf_export as pdf_export
+import modules.resultado_acao as ra
+import modules.resultado_tela as resultado_tela
 import modules.styles as styles
 from modules.file_resolver import ArquivoObrigatorioAusenteError, localizar_arquivo, localizar_item
 from modules.storage import ArquivoNaoEncontradoError, StorageError, get_storage_client
@@ -248,10 +250,9 @@ def _carregar_preview_modelo(_storage, caminho_ciclo: str, variante: str, assina
 def _carregar_dados_resultado_acao(_storage, caminho_ciclo: str, assinatura: str) -> dict:
     """Carrega os dados necessários para a feature Resultado da ação (Aba
     3 — Conferência). Só monta os DataFrames quando os DOIS arquivos
-    "depois" (Retrato de Vendas + Estoque atualizado) já foram enviados —
-    sem o Estoque atualizado não dá pra diferenciar "deixou de vender" de
-    "sem venda no período" com confiança (ver data_loader.montar_tabela_
-    resultado_acao), então a feature não é exibida parcialmente.
+    "depois" (Retrato de Vendas + Estoque atualizado) já foram enviados:
+    sem o Estoque atualizado não dá para saber como a loja terminou o mês,
+    então a feature não é exibida parcialmente.
 
     Retorna um dict:
       "retrato_presente" / "estoque_atualizado_presente": bool — pra UI
@@ -259,6 +260,8 @@ def _carregar_dados_resultado_acao(_storage, caminho_ciclo: str, assinatura: str
         erro, é um estado esperado até o consultor enviar).
       "retrato_df" / "estoque_resultado_df" / "estoque_atualizado_df":
         None enquanto algum dos dois não foi enviado.
+      "periodo": (início, fim) lido do próprio Retrato, ou None se o arquivo
+        não tiver o período.
     """
     arq_retrato = localizar_arquivo(_storage, caminho_ciclo, config.FILE_SPECS["retrato_vendas"], "retrato_vendas")
     arq_estoque_atualizado = localizar_arquivo(
@@ -271,12 +274,14 @@ def _carregar_dados_resultado_acao(_storage, caminho_ciclo: str, assinatura: str
         "retrato_df": None,
         "estoque_resultado_df": None,
         "estoque_atualizado_df": None,
+        "periodo": None,
     }
     if arq_retrato is not None and arq_estoque_atualizado is not None:
         arq_estoque = localizar_arquivo(_storage, caminho_ciclo, config.FILE_SPECS["estoque"], "estoque")
         dados["retrato_df"] = dl.carregar_retrato_vendas(io.BytesIO(arq_retrato.conteudo))
         dados["estoque_resultado_df"] = dl.carregar_estoque_resultado(io.BytesIO(arq_estoque.conteudo))
-        dados["estoque_atualizado_df"] = dl.carregar_estoque(io.BytesIO(arq_estoque_atualizado.conteudo))
+        dados["estoque_atualizado_df"] = dl.carregar_estoque_atualizado_resultado(io.BytesIO(arq_estoque_atualizado.conteudo))
+        dados["periodo"] = dl.extrair_periodo_retrato(io.BytesIO(arq_retrato.conteudo))
     return dados
 
 
@@ -374,161 +379,92 @@ def _controles_paginacao(chave_pagina: str, pagina_atual: int, total_paginas: in
 # Resultado da ação (Aba 3 — Conferência) — renderização
 # ---------------------------------------------------------------------------
 
-def _par_texto(antes, depois, status: str, formatador) -> str:
-    """Formata o par "antes → depois" de uma linha da lista produto a
-    produto. Casos especiais: "sem_dado" (EAN não localizado, não há
-    nenhum dos dois) e "novo" (não existia "antes") mostram travessão do
-    lado que não se aplica, em vez de um "0" que pareceria dado real."""
-    texto_antes = "—" if status in ("sem_dado", "novo") else formatador(antes)
-    texto_depois = "—" if status == "sem_dado" else formatador(depois)
-    return f'<span class="antes">{texto_antes}</span><span class="seta">→</span>{texto_depois}'
+def _periodo_depois(periodo_arquivo, metadata_ciclo: dict | None) -> tuple[str, date]:
+    """(rótulo, último dia) do período do "depois". O que vem do próprio
+    Retrato tem prioridade. Ciclos enviados antes de o período ser lido do
+    arquivo só têm "retrato_vendas_ano_mes", que era o mês do ENVIO."""
+    metadata_ciclo = metadata_ciclo or {}
+    if periodo_arquivo:
+        return f"vendas de {periodo_arquivo[0]:%d/%m} a {periodo_arquivo[1]:%d/%m}", periodo_arquivo[1]
+    periodo = metadata_ciclo.get("retrato_vendas_periodo")
+    rotulo = _rotulo_periodo_retrato(periodo) if periodo else None
+    if rotulo:
+        return f"vendas de {rotulo}", date.fromisoformat(periodo["fim"])
+    ano_mes = metadata_ciclo.get("retrato_vendas_ano_mes") or date.today().strftime("%Y-%m")
+    return f"vendas de {styles.mes_legivel(ano_mes)}", date.today()
 
 
+@st.fragment
 def _renderizar_resultado_acao(
-    tabela: pd.DataFrame, mes_antes_legivel: str, mes_depois_legivel: str, ciclo_selecionado: str
+    resultado: ra.ResultadoAcao, rotulo_antes: str, rotulo_depois: str, ciclo_selecionado: str
 ) -> None:
-    """Renderiza o dashboard completo do Resultado da ação — chamado só
-    depois que a UI (aba_conf) já confirmou que há ajuste de mix salvo e
-    que os dois arquivos "depois" (Retrato de Vendas + Estoque
-    atualizado) foram enviados. `ciclo_selecionado` só é usado para
-    escopar a página atual da lista "Produto a produto" (ver Paginação de
-    listas longas) por loja/ciclo — sem filtro de busca nesta lista, então
-    não há nada a resetar além da própria troca de loja/ciclo."""
+    """Renderiza o dashboard do Resultado da ação. É um fragmento: clicar num
+    filtro só refaz esta seção, sem recarregar as fotos acima dela."""
+    st.markdown(resultado_tela.periodo_html(rotulo_antes, rotulo_depois), unsafe_allow_html=True)
+    st.markdown(resultado_tela.cartao_principal_html(resultado), unsafe_allow_html=True)
+
+    chave_grupo = f"resultado_grupo::{ciclo_selecionado}"
+    chave_situacao = f"resultado_situacao::{ciclo_selecionado}"
+
     st.markdown(
-        f'<p class="mdf-comparativo-legenda">Comparativo: '
-        f'<b>{mes_antes_legivel}</b> vs <b>{mes_depois_legivel}</b>.</p>',
+        '<p class="mdf-ra-h2">Por grupo</p><p class="mdf-ra-apoio">Clique num grupo para filtrar a lista.</p>',
         unsafe_allow_html=True,
     )
+    resultado_tela.filtro_clicavel("cards", resultado_tela.itens_cards(resultado), chave_grupo)
 
-    total_antes = float(tabela["faturamento_antes"].sum())
-    total_depois = float(tabela["faturamento_depois"].sum())
-    crescimento_total_rs = total_depois - total_antes
-    crescimento_total_pct = (crescimento_total_rs / total_antes * 100) if total_antes > 0 else None
+    grupo = st.session_state.get(chave_grupo)
+    situacao = st.session_state.get(chave_situacao)
+    tabela = resultado.do_grupo(grupo) if grupo else resultado.tabela
 
-    c_stat1, c_stat2, c_stat3 = st.columns(3, gap="medium")
-    with c_stat1:
-        classe_valor = "mdf-stat-valor mdf-stat-valor-positivo" if crescimento_total_rs >= 0 else "mdf-stat-valor"
-        sinal = "+" if crescimento_total_rs >= 0 else ""
-        styles.cartao_stat(
-            "Crescimento em R$",
-            f'<p class="{classe_valor}">{sinal}{styles.formatar_rs(crescimento_total_rs)}</p>',
-            f"{styles.formatar_rs(total_antes)} → {styles.formatar_rs(total_depois)} (mensal)",
+    c_titulo, c_limpar = st.columns([0.8, 0.2], vertical_alignment="bottom")
+    with c_titulo:
+        st.markdown(
+            '<p class="mdf-ra-h2">Produto a produto</p>'
+            '<p class="mdf-ra-apoio">Clique numa situação para filtrar. Passe o mouse para ver o que ela significa.</p>',
+            unsafe_allow_html=True,
         )
-    with c_stat2:
-        if crescimento_total_pct is None:
-            valor_pct_html = '<p class="mdf-stat-valor">—</p>'
-            sub_pct = "sem base de faturamento \"antes\" para calcular %"
-        else:
-            classe_valor = "mdf-stat-valor mdf-stat-valor-positivo" if crescimento_total_pct >= 0 else "mdf-stat-valor"
-            sinal = "+" if crescimento_total_pct >= 0 else ""
-            valor_pct_html = f'<p class="{classe_valor}">{sinal}{crescimento_total_pct:.1f}%</p>'
-            sub_pct = "sobre o faturamento mensal do mix acompanhado"
-        styles.cartao_stat("Crescimento em %", valor_pct_html, sub_pct)
-    with c_stat3:
-        styles.cartao_stat(
-            "Faturamento mensal",
-            f'<p class="mdf-stat-valor">{styles.formatar_rs(total_depois)}</p>',
-            f"Antes: {styles.formatar_rs(total_antes)}",
+    with c_limpar:
+        if grupo or situacao:
+            def _limpar_filtros() -> None:
+                st.session_state[chave_grupo] = None
+                st.session_state[chave_situacao] = None
+
+            st.button("Limpar filtros", key=f"resultado_limpar::{ciclo_selecionado}", width="stretch", on_click=_limpar_filtros)
+
+    resultado_tela.filtro_clicavel("chips", resultado_tela.itens_chips(tabela, situacao), chave_situacao)
+    if situacao:
+        tabela = tabela[tabela["situacao"] == situacao]
+
+    if tabela.empty:
+        st.markdown('<p class="mdf-ra-vazio">Nenhum produto neste filtro.</p>', unsafe_allow_html=True)
+    else:
+        chave_pagina = f"pagina_resultado_acao::{ciclo_selecionado}"
+        pagina_atual, total_paginas = _pagina_atual_paginacao(
+            chave_pagina, len(tabela), _TAMANHO_PAGINA_LISTA, chave_reset=(grupo, situacao),
         )
+        pagina = _fatia_pagina(tabela, pagina_atual, _TAMANHO_PAGINA_LISTA)
+        st.markdown(resultado_tela.tabela_html(pagina), unsafe_allow_html=True)
+        _controles_paginacao(chave_pagina, pagina_atual, total_paginas, len(tabela), sufixo_key="rodape")
 
-    st.markdown("&nbsp;", unsafe_allow_html=True)
-
-    # ---- Top 3 produtos que mais cresceram (em R$) ----
-    top3 = tabela[tabela["crescimento_rs"] > 0].sort_values("crescimento_rs", ascending=False).head(3)
-    if len(top3) > 0:
-        with st.container():
-            st.markdown('<span class="mdf-top3-card-marker"></span>', unsafe_allow_html=True)
-            st.markdown('<p class="mdf-foto-titulo">Top 3 produtos que mais cresceram (em R$)</p>', unsafe_allow_html=True)
-            for posicao, (_, row) in enumerate(top3.iterrows(), start=1):
-                badge_html = styles.badge_inline_status_resultado(row["status"])
-                meta = f'{int(row["unidades_antes"])} → {int(row["unidades_depois"])} un./mês'
-                if row["crescimento_pct"] is not None and pd.notna(row["crescimento_pct"]):
-                    meta += f' · +{row["crescimento_pct"]:.0f}%'
-                c1, c2, c3 = st.columns([0.08, 0.72, 0.20])
-                with c1:
-                    st.markdown(f'<div class="mdf-rank-badge">{posicao}</div>', unsafe_allow_html=True)
-                with c2:
-                    st.markdown(f'<p class="mdf-produto-nome">{row["produto"]}{badge_html}</p>', unsafe_allow_html=True)
-                    st.markdown(f'<p class="mdf-produto-meta">{meta}</p>', unsafe_allow_html=True)
-                with c3:
-                    st.markdown(styles.chip_crescimento_rs(row["crescimento_rs"]), unsafe_allow_html=True)
-        st.markdown("&nbsp;", unsafe_allow_html=True)
-
-    # ---- Produtos que deixaram de vender ----
-    deixaram = tabela[tabela["status"] == "deixou_de_vender"].sort_values("faturamento_antes", ascending=False)
-    if len(deixaram) > 0:
-        with st.container():
-            st.markdown('<span class="mdf-alerta-card-marker"></span>', unsafe_allow_html=True)
+        c_rodape, c_exportar = st.columns([0.8, 0.2], vertical_alignment="center")
+        with c_rodape:
             st.markdown(
-                '<p class="mdf-foto-titulo"><span class="mdf-icone-alerta">⚠</span> Produtos que deixaram de vender</p>',
+                f'<p class="mdf-ra-apoio">Mostrando {len(pagina)} de {len(tabela)}, do maior para o menor impacto.</p>',
                 unsafe_allow_html=True,
             )
-            st.markdown(
-                f'<p class="mdf-stat-sub">Estavam no estoque em {mes_antes_legivel}, não tiveram venda em '
-                f'{mes_depois_legivel} e o Estoque atualizado confirma que saíram do mix '
-                '(estoque zerado ou item não encontrado).</p>',
-                unsafe_allow_html=True,
+        with c_exportar:
+            st.download_button(
+                "Exportar lista",
+                resultado_tela.csv_da_lista(tabela),
+                file_name=f"resultado_acao_{ciclo_selecionado.replace('/', '_')}.csv",
+                mime="text/csv",
+                on_click="ignore",
+                width="stretch",
+                key=f"resultado_exportar::{ciclo_selecionado}",
             )
-            st.markdown('<div style="height: 14px;"></div>', unsafe_allow_html=True)
-            for _, row in deixaram.iterrows():
-                c1, c2 = st.columns([0.78, 0.22])
-                with c1:
-                    st.markdown(f'<p class="mdf-produto-nome">{row["produto"]}</p>', unsafe_allow_html=True)
-                    st.markdown(
-                        f'<p class="mdf-produto-meta">EAN {row["ean_original"]} · vendia '
-                        f'{int(row["unidades_antes"])} un./mês · {styles.formatar_rs(row["faturamento_antes"])}/mês</p>',
-                        unsafe_allow_html=True,
-                    )
-                with c2:
-                    st.markdown(styles.chip_variacao_produto("deixou_de_vender", None, None), unsafe_allow_html=True)
-        st.markdown("&nbsp;", unsafe_allow_html=True)
 
-    # ---- Produto a produto ----
-    st.markdown('<p class="mdf-lista-titulo">Produto a produto</p>', unsafe_allow_html=True)
-    st.markdown(
-        '<p class="mdf-stat-sub">Produtos do ajuste de mix da loja, na mesma ordem de gôndola — '
-        'mesmo padrão já usado na Sugestão de GC.</p>',
-        unsafe_allow_html=True,
-    )
-    produtos_nao_encontrados = tabela.attrs.get("produtos_nao_encontrados", [])
-    if produtos_nao_encontrados:
-        with st.expander(f"⚠️ {len(produtos_nao_encontrados)} produto(s) do ajuste de mix não encontrado(s) no Mapa da Farmácia atual"):
-            st.caption("Esses produtos foram salvos no ajuste de mix, mas o Mapa da Farmácia atual não os contém mais.")
-            for item in produtos_nao_encontrados:
-                st.markdown(f"- EAN cadastrado: `{item['ean_original']}` — quantidade salva: {item['quantidade']}")
-
-    # ---- Paginação da lista (ver bloco "Paginação de listas longas" no
-    # topo do arquivo) — sem filtro de busca nesta seção, então
-    # chave_reset fica None (só reseta a página quando a própria
-    # loja/ciclo muda, já que isso muda a chave_pagina inteira). ----
-    chave_pagina_resultado = f"pagina_resultado_acao::{ciclo_selecionado}"
-    pagina_atual_resultado, total_paginas_resultado = _pagina_atual_paginacao(
-        chave_pagina_resultado, len(tabela), _TAMANHO_PAGINA_LISTA,
-    )
-    tabela_pagina_resultado = _fatia_pagina(tabela, pagina_atual_resultado, _TAMANHO_PAGINA_LISTA)
-
-    with st.container(border=True):
-        st.markdown('<span class="mdf-painel-marker"></span>', unsafe_allow_html=True)
-        for _, row in tabela_pagina_resultado.iterrows():
-            with st.container():
-                st.markdown('<span class="mdf-row-marker"></span>', unsafe_allow_html=True)
-                c1, c2, c3 = st.columns([0.4, 0.22, 0.22])
-                badge_html = styles.badge_inline_status_resultado(row["status"])
-                with c1:
-                    st.markdown(f'<p class="mdf-produto-nome">{row["produto"]}{badge_html}</p>', unsafe_allow_html=True)
-                    ean_label = "EAN não localizado" if row["status"] == "sem_dado" else row["ean_original"]
-                    st.markdown(f'<p class="mdf-produto-meta">{ean_label}</p>', unsafe_allow_html=True)
-                with c2:
-                    texto_unidades = _par_texto(row["unidades_antes"], row["unidades_depois"], row["status"], lambda v: f"{int(v)}")
-                    st.markdown(f'<p class="mdf-par-compacto">{texto_unidades}</p>', unsafe_allow_html=True)
-                with c3:
-                    texto_valor = _par_texto(row["faturamento_antes"], row["faturamento_depois"], row["status"], styles.formatar_rs)
-                    st.markdown(f'<p class="mdf-par-compacto">{texto_valor}</p>', unsafe_allow_html=True)
-                    st.markdown(
-                        styles.chip_variacao_produto(row["status"], row["crescimento_rs"], row["crescimento_pct"]),
-                        unsafe_allow_html=True,
-                    )
-    _controles_paginacao(chave_pagina_resultado, pagina_atual_resultado, total_paginas_resultado, len(tabela), sufixo_key="rodape")
+    with st.expander("Como o resultado é calculado"):
+        st.markdown(resultado_tela.EXPLICACAO)
 
 
 # ---------------------------------------------------------------------------
@@ -536,18 +472,21 @@ def _renderizar_resultado_acao(
 # ---------------------------------------------------------------------------
 
 def _atualizar_metadata_ciclo(
-    storage, loja: str, ano_mes: str, consultor: str, retrato_vendas_enviado: bool = False
+    storage, loja: str, ano_mes: str, consultor: str, retrato_periodo: dict | None = None
 ) -> None:
     """Cria ou atualiza (mesclando com o que já existir) o metadata.json
     do ciclo {loja}/{ano_mes}. Só sobrescreve o campo 'consultor' se um
     valor não-vazio foi informado neste envio — um envio sem consultor
     preenchido não apaga o consultor registrado por um envio anterior.
 
-    Quando `retrato_vendas_enviado` é True, carimba também o mês/ano
-    ATUAL (não o do ciclo) em 'retrato_vendas_ano_mes' — é esse carimbo
-    que a feature Resultado da ação (Aba 3) usa para saber automaticamente
-    qual foi o mês "depois" do comparativo, sem o consultor precisar
-    informar nada (ver aba_conf)."""
+    Quando um Retrato de Vendas foi enviado (`retrato_periodo`, ver
+    _montar_periodo_retrato), grava o período de VENDAS do arquivo — lido
+    do próprio arquivo ou informado pelo consultor no pop-up — em
+    'retrato_vendas_ano_mes' (mês do início) e 'retrato_vendas_periodo'
+    (datas exatas + origem). É isso que a feature Resultado da ação (Aba
+    3) mostra como o mês "depois" do comparativo (ver aba_conf). Antes
+    era carimbado o mês do ENVIO, que costuma ser o mês seguinte ao das
+    vendas (Retrato de um mês fechado é enviado no começo do outro)."""
     caminho = f"{loja}/{ano_mes}/{inventario.NOME_ARQUIVO_METADATA}"
     metadata_atual = {}
     try:
@@ -561,11 +500,100 @@ def _atualizar_metadata_ciclo(
     # em UTC, e um horário "ingênuo" fica ambíguo pra quem lê depois (ex.:
     # relatório mensal, que converte pra horário de Brasília).
     metadata_atual["enviado_em"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    if retrato_vendas_enviado:
-        metadata_atual["retrato_vendas_ano_mes"] = date.today().strftime("%Y-%m")
+    if retrato_periodo:
+        metadata_atual["retrato_vendas_ano_mes"] = retrato_periodo["ano_mes"]
+        metadata_atual["retrato_vendas_periodo"] = {
+            chave: retrato_periodo[chave] for chave in ("inicio", "fim", "origem")
+        }
 
     conteudo = json.dumps(metadata_atual, ensure_ascii=False, indent=2).encode("utf-8")
     storage.escrever_arquivo_bytes(caminho, conteudo)
+
+
+# ---------------------------------------------------------------------------
+# Período de vendas do Retrato de Vendas
+# ---------------------------------------------------------------------------
+
+def _montar_periodo_retrato(inicio: date, fim: date, origem: str) -> dict:
+    """origem: "arquivo" (lido de "Filtros aplicados") ou "informado"
+    (escolhido pelo consultor no pop-up, quando o arquivo não tem)."""
+    return {
+        "inicio": inicio.isoformat(),
+        "fim": fim.isoformat(),
+        "origem": origem,
+        "ano_mes": inicio.strftime("%Y-%m"),
+    }
+
+
+def _periodo_e_mes_inteiro(inicio: date, fim: date) -> bool:
+    proximo_mes = (inicio.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return inicio.day == 1 and fim == proximo_mes - timedelta(days=1)
+
+
+def _rotulo_periodo_retrato(periodo: dict) -> str | None:
+    """'Julho 2026' quando o período é um mês inteiro; '01/07/2026 a
+    15/07/2026' quando não é. None se o dict estiver malformado."""
+    try:
+        inicio = date.fromisoformat(periodo["inicio"])
+        fim = date.fromisoformat(periodo["fim"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if _periodo_e_mes_inteiro(inicio, fim):
+        return styles.mes_legivel(inicio.strftime("%Y-%m"))
+    return f"{inicio:%d/%m/%Y} a {fim:%d/%m/%Y}"
+
+
+def _periodo_retrato_para_envio(conteudo: bytes) -> dict | None:
+    """Período do Retrato que está sendo enviado: o do próprio arquivo;
+    se ele não tiver, o mês informado no pop-up (_dialog_mes_retrato); se
+    nenhum dos dois, None — e aí quem chama não grava nada e abre o
+    pop-up."""
+    mes_informado = st.session_state.pop("_upload_mes_retrato_informado", None)
+    lido = dl.extrair_periodo_retrato(io.BytesIO(conteudo))
+    if lido:
+        return _montar_periodo_retrato(lido[0], lido[1], "arquivo")
+    if mes_informado:
+        ano, mes = (int(p) for p in mes_informado.split("-"))
+        inicio = date(ano, mes, 1)
+        fim = (inicio.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+        return _montar_periodo_retrato(inicio, fim, "informado")
+    return None
+
+
+def _fechar_dialog_mes_retrato() -> None:
+    st.session_state.pop("_upload_pedir_mes_retrato", None)
+
+
+@st.dialog("Qual o mês do Retrato de Vendas?", on_dismiss=_fechar_dialog_mes_retrato)
+def _dialog_mes_retrato() -> None:
+    """Aberto quando o Retrato de Vendas enviado não traz o período de
+    vendas no rodapé ("Filtros aplicados"). Nada foi gravado ainda:
+    confirmar reenvia o lote inteiro sozinho, já com o mês escolhido;
+    cancelar (ou fechar pelo X, ver on_dismiss) não envia nada. O pedido
+    (_upload_pedir_mes_retrato) fica guardado enquanto o pop-up estiver
+    aberto e só é limpo por uma dessas três saídas."""
+    st.write(
+        "Não encontramos o período de vendas no arquivo do **Retrato de Vendas** "
+        "(normalmente ele aparece no rodapé, em \"Filtros aplicados\"). "
+        "Informe a qual mês as vendas desse arquivo se referem."
+    )
+    hoje = date.today()
+    opcoes = []
+    ano, mes = hoje.year, hoje.month
+    for _ in range(6):
+        opcoes.append(f"{ano:04d}-{mes:02d}")
+        ano, mes = (ano - 1, 12) if mes == 1 else (ano, mes - 1)
+    # Padrão = mês anterior: o Retrato costuma ser de um mês já fechado.
+    mes_escolhido = st.selectbox("Mês das vendas", opcoes, index=1, format_func=styles.mes_legivel)
+    c1, c2 = st.columns(2)
+    if c1.button("Confirmar e enviar", type="primary", key="retrato_mes_confirmar", width="stretch"):
+        _fechar_dialog_mes_retrato()
+        st.session_state["_upload_mes_retrato_informado"] = mes_escolhido
+        st.session_state["_upload_reenviar"] = True
+        st.rerun()
+    if c2.button("Cancelar", key="retrato_mes_cancelar", width="stretch"):
+        _fechar_dialog_mes_retrato()
+        st.rerun()
 
 
 def _validar_mapa_farmacia_upload(conteudo: bytes) -> list[dict]:
@@ -935,14 +963,28 @@ def pagina_upload() -> None:
                     key=f"upload_arquivo_{chave}",
                 )
 
-        if st.button("Enviar arquivos", type="primary", key="upload_botao_enviar"):
+        # "_upload_reenviar": o pop-up do mês do Retrato (ver
+        # _dialog_mes_retrato) pede o mesmo envio de novo depois de
+        # confirmado — os arquivos continuam selecionados nos campos.
+        enviar = st.button("Enviar arquivos", type="primary", key="upload_botao_enviar")
+        if st.session_state.pop("_upload_reenviar", False):
+            enviar = True
+        if enviar:
             arquivos_preenchidos = {
                 chave: arquivo for chave, arquivo in arquivos_selecionados.items() if arquivo is not None
             }
+            retrato_periodo = None
             if not upload_loja.strip():
                 st.warning("Preencha o código da loja antes de enviar.")
             elif not arquivos_preenchidos:
                 st.warning("Selecione ao menos um arquivo antes de enviar.")
+            elif "retrato_vendas" in arquivos_preenchidos and (
+                retrato_periodo := _periodo_retrato_para_envio(arquivos_preenchidos["retrato_vendas"].getvalue())
+            ) is None:
+                # Retrato sem período no arquivo e sem mês informado: NADA
+                # do lote é gravado agora — o pop-up abaixo pergunta o mês
+                # e reenvia tudo sozinho.
+                st.session_state["_upload_pedir_mes_retrato"] = True
             else:
                 # Ciclo (mês) normalmente é sempre o mês/ano atual no
                 # momento do envio (ver item 4 do pedido de mudança
@@ -1042,11 +1084,31 @@ def pagina_upload() -> None:
                     try:
                         _atualizar_metadata_ciclo(
                             storage, loja_limpa, ano_mes, upload_consultor.strip(),
-                            retrato_vendas_enviado=retrato_enviado_agora,
+                            retrato_periodo=retrato_periodo if retrato_enviado_agora else None,
                         )
                     except StorageError as e:
                         falhas.append(f"metadata.json: {e}")
 
+                # Aviso (não bloqueia) quando o Retrato não cobre um mês
+                # inteiro: o "antes" do Resultado da ação é uma média
+                # MENSAL, então um período menor ou maior distorce a
+                # comparação.
+                avisos = []
+                if retrato_periodo:
+                    inicio = date.fromisoformat(retrato_periodo["inicio"])
+                    fim = date.fromisoformat(retrato_periodo["fim"])
+                    if not _periodo_e_mes_inteiro(inicio, fim):
+                        avisos.append(
+                            f"O Retrato de Vendas cobre de {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}, que não é "
+                            "um mês completo. O Resultado da ação compara com a média MENSAL de "
+                            "vendas anterior, então o resultado pode ficar distorcido — o ideal é "
+                            "exportar o Retrato de um mês inteiro."
+                        )
+
+                st.session_state["_upload_avisos"] = avisos
+                # Período guardado pro caso de o Retrato cair na
+                # confirmação de sobrescrita ("Sim, substituir") abaixo.
+                st.session_state["_upload_retrato_periodo_pendente"] = retrato_periodo
                 st.session_state["_upload_enviados_ok"] = enviados_ok
                 st.session_state["_upload_falhas"] = falhas
                 st.session_state["_upload_conflitos"] = conflitos
@@ -1061,6 +1123,12 @@ def pagina_upload() -> None:
     if st.session_state.get("_upload_falhas"):
         lista_falhas = "\n".join(f"- {f}" for f in st.session_state["_upload_falhas"])
         st.error(f"Falha ao enviar:\n{lista_falhas}")
+    for aviso in st.session_state.get("_upload_avisos") or []:
+        st.warning(aviso)
+
+    # Retrato sem período no arquivo: pergunta o mês (nada foi gravado).
+    if st.session_state.get("_upload_pedir_mes_retrato"):
+        _dialog_mes_retrato()
 
     # Aviso didático (não-bloqueante — o arquivo já foi salvo) sobre
     # colisões de (módulo, posição) no Mapa da Farmácia recém-enviado. Ver
@@ -1100,7 +1168,10 @@ def pagina_upload() -> None:
                     _atualizar_metadata_ciclo(
                         storage, loja_pend, ano_mes_pend,
                         st.session_state.get("_upload_consultor_pendente", ""),
-                        retrato_vendas_enviado=(chave == "retrato_vendas"),
+                        retrato_periodo=(
+                            st.session_state.get("_upload_retrato_periodo_pendente")
+                            if chave == "retrato_vendas" else None
+                        ),
                     )
                     st.toast(f"{_ROTULOS_ARQUIVOS_UPLOAD[chave]} substituído.", icon="✅")
 
@@ -1914,67 +1985,56 @@ def pagina_conferencia() -> None:
         styles.cartao_foto("Depois", imagem_depois, mime_depois, msg_depois)
 
     # ---- Resultado da ação ----
-    # Só existe a partir do momento em que há um ajuste de mix
-    # salvo (é a lista base dela — ver montar_tabela_resultado_
-    # acao) — carregado de novo aqui, independente da aba_gc, pra
-    # esta seção funcionar mesmo que a Sugestão de GC não tenha
-    # sido aberta nesta mesma execução (abas do Streamlit não
-    # compartilham escopo de execução entre si de forma confiável
-    # quando há erro em outra aba).
-    ajuste_salvo_conf = dl.carregar_ajuste_mix_salvo(storage, ciclo_selecionado)
-    if ajuste_salvo_conf and ajuste_salvo_conf.get("produtos"):
-        st.markdown("&nbsp;", unsafe_allow_html=True)
-        st.markdown('<p class="mdf-secao-titulo">Resultado da ação</p>', unsafe_allow_html=True)
+    # Não depende do ajuste de mix: compara o que a loja vendeu, com ou sem
+    # ajuste salvo neste ciclo.
+    st.markdown("&nbsp;", unsafe_allow_html=True)
+    st.markdown('<p class="mdf-secao-titulo">Resultado da ação</p>', unsafe_allow_html=True)
 
-        if mapa_df is None:
-            st.error(erro_dados or "Não foi possível carregar o Mapa da Farmácia para calcular o resultado da ação.")
-        else:
-            erro_resultado = None
-            dados_resultado = None
-            try:
-                dados_resultado = _carregar_dados_resultado_acao(
-                    storage, ciclo_selecionado, _assinatura_ciclo(ciclo_selecionado)
-                )
-            except dl.PlanilhaInvalidaError as e:
-                erro_resultado = (
-                    f"Não foi possível interpretar o Retrato de Vendas ou o Estoque "
-                    f"atualizado: {e}"
-                )
-            except dl.MultiplasLojasEstoqueError as e:
-                erro_resultado = (
-                    f"O Estoque atualizado contém mais de uma loja: "
-                    f"{', '.join(e.ids_encontrados)}."
-                )
+    if mapa_df is None:
+        st.error(erro_dados or "Não foi possível carregar o Mapa da Farmácia para calcular o resultado da ação.")
+        return
 
-            if erro_resultado:
-                st.error(erro_resultado)
-            elif not dados_resultado["retrato_presente"] or not dados_resultado["estoque_atualizado_presente"]:
-                faltando = []
-                if not dados_resultado["retrato_presente"]:
-                    faltando.append("**Retrato de Vendas**")
-                if not dados_resultado["estoque_atualizado_presente"]:
-                    faltando.append("**Estoque atualizado**")
-                st.info(
-                    f"Envie {' e '.join(faltando)} na página Upload (pelo botão \"Upload\" "
-                    f"deste ciclo, em Selecionar Loja) para ver o resultado da ação aqui."
-                )
-            else:
-                tabela_resultado = dl.montar_tabela_resultado_acao(
-                    mapa_df,
-                    ajuste_salvo_conf,
-                    dados_resultado["estoque_resultado_df"],
-                    dados_resultado["retrato_df"],
-                    dados_resultado["estoque_atualizado_df"],
-                )
-                mes_antes_legivel = styles.mes_legivel(ciclo_selecionado.split("/")[-1])
-                # "retrato_vendas_ano_mes" é carimbado automaticamente no
-                # metadata.json no momento do upload (ver
-                # _atualizar_metadata_ciclo) — fallback pro mês atual só
-                # cobre o caso raro de um ciclo antigo, enviado antes
-                # dessa feature existir, sem o carimbo.
-                ano_mes_depois = (metadata_ciclo or {}).get("retrato_vendas_ano_mes") or date.today().strftime("%Y-%m")
-                mes_depois_legivel = styles.mes_legivel(ano_mes_depois)
-                _renderizar_resultado_acao(tabela_resultado, mes_antes_legivel, mes_depois_legivel, ciclo_selecionado)
+    erro_resultado = None
+    dados_resultado = None
+    try:
+        dados_resultado = _carregar_dados_resultado_acao(
+            storage, ciclo_selecionado, _assinatura_ciclo(ciclo_selecionado)
+        )
+    except dl.PlanilhaInvalidaError as e:
+        erro_resultado = (
+            f"Não foi possível interpretar o Retrato de Vendas ou o Estoque "
+            f"atualizado: {e}"
+        )
+    except dl.MultiplasLojasEstoqueError as e:
+        erro_resultado = (
+            f"O Estoque atualizado contém mais de uma loja: "
+            f"{', '.join(e.ids_encontrados)}."
+        )
+
+    if erro_resultado:
+        st.error(erro_resultado)
+    elif not dados_resultado["retrato_presente"] or not dados_resultado["estoque_atualizado_presente"]:
+        faltando = []
+        if not dados_resultado["retrato_presente"]:
+            faltando.append("**Retrato de Vendas**")
+        if not dados_resultado["estoque_atualizado_presente"]:
+            faltando.append("**Estoque atualizado**")
+        st.info(
+            f"Envie {' e '.join(faltando)} na página Upload (pelo botão \"Upload\" "
+            f"deste ciclo, em Selecionar Loja) para ver o resultado da ação aqui."
+        )
+    else:
+        rotulo_depois, fim_periodo = _periodo_depois(dados_resultado["periodo"], metadata_ciclo)
+        resultado = ra.montar_resultado_acao(
+            mapa_df,
+            dados_resultado["estoque_resultado_df"],
+            dados_resultado["retrato_df"],
+            dados_resultado["estoque_atualizado_df"],
+            fim_periodo,
+        )
+        mes_planograma = styles.mes_legivel(ciclo_selecionado.split("/")[-1])
+        rotulo_antes = f"média mensal dos 3 meses do Estoque de {mes_planograma}"
+        _renderizar_resultado_acao(resultado, rotulo_antes, rotulo_depois, ciclo_selecionado)
 
 
 # ---------------------------------------------------------------------------

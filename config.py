@@ -175,10 +175,36 @@ COLUNAS_RETRATO_VENDAS = {
 COLUNAS_ESTOQUE_RESULTADO = {
     "id_loja": "Id lojas",
     "ean": "Cód. barras",
-    "estoque": "Unidades em estoque",
+    "estoque": ["Unidades em estoque", "Und. em estoque", "Und em estoque"],
     "estoque_venda_rs": "Estoque venda (R$)",
-    "unidades_vendidas_3m": "Unidades vendidas",
+    "unidades_vendidas_3m": ["Unidades vendidas", "Und. vendidas", "Und vendidas"],
 }
+
+# Estoque atualizado (o "depois"), lido pelo Resultado da ação. "ultima_compra"
+# é opcional: sem ela, nenhum produto conta como comprado recentemente.
+COLUNAS_ESTOQUE_ATUALIZADO_RESULTADO = {
+    "id_loja": "Id lojas",
+    "ean": "Cód. barras",
+    "estoque": ["Unidades em estoque", "Und. em estoque", "Und em estoque"],
+    "ultima_compra": "Última compra",
+}
+
+# ---------------------------------------------------------------------------
+# Regras de negócio (Aba 3 — Resultado da ação)
+# ---------------------------------------------------------------------------
+
+# Cresceu/Caiu só com pelo menos esta diferença em unidades E esta variação
+# em %. Abaixo de qualquer uma, o produto fica como Estável.
+RESULTADO_VARIACAO_MIN_UNIDADES = 1
+RESULTADO_VARIACAO_MIN_PCT = 5
+
+# Com venda "antes" menor que esta (un./mês), a tela não mostra a variação em
+# %, porque qualquer oscilação pequena viraria uma porcentagem enorme.
+RESULTADO_UNIDADES_MIN_PARA_PCT = 2
+
+# Produto sem estoque no fim do mês conta como "Zerou o estoque" (e não "Saiu
+# do mix") se foi comprado até esta quantidade de dias antes do fim do período.
+RESULTADO_DIAS_COMPRA_RECENTE = 60
 
 # ---------------------------------------------------------------------------
 # Identidade visual (usada no styles.py e na geração do PDF)
@@ -203,6 +229,8 @@ COR_CINZA_TEXTO = "#4B5563"
 # destacar queda de forma mais forte que o neutro cinza.
 COR_VERMELHO_BG = "#FBE3E1"
 COR_VERMELHO_TEXTO = "#9A342C"
+COR_LARANJA_BG = "#FCE6D6"
+COR_LARANJA_TEXTO = "#8A3B12"
 
 LOGO_PATH = "assets/logo_rmc.webp"
 

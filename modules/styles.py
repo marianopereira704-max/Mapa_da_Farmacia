@@ -471,24 +471,9 @@ def aplicar_estilo() -> None:
         .mdf-badge-nao-encontrado {{ background: #EEF0F3; color: #7A8699; }}
         .mdf-badge-frentes {{ background: {config.COR_ROXO_BG}; color: {config.COR_ROXO_TEXTO}; }}
 
-        /* ---- Badges inline pequenos (Resultado da ação — "novo" /
-        "deixou de vender", junto ao nome do produto na lista e no Top 3).
-        Mais compactos que .mdf-badge (usado nas linhas do Ajuste de Mix),
-        pra caber ao lado do nome sem competir com ele. */
-        .mdf-badge-inline {{
-            font-size: 10px; font-weight: 700; text-transform: uppercase;
-            letter-spacing: 0.03em; padding: 1px 7px; border-radius: 8px;
-            margin-left: 6px; vertical-align: middle; display: inline-block;
-        }}
-        .mdf-badge-inline-novo {{ background: {config.COR_VERDE_BG}; color: {config.COR_VERDE_TEXTO}; }}
-        .mdf-badge-inline-deixou {{ background: {config.COR_AMBAR_BG}; color: {config.COR_AMBAR_TEXTO}; }}
-
-        /* ---- Chips de variação (Resultado da ação) — crescimento em R$
-        no Top 3 e % na lista produto a produto. Verde = cresceu, cinza =
-        neutro (sem venda no período, sem dado), âmbar = alerta (deixou de
-        vender), vermelho = queda de venda (única exceção à convenção
-        "nunca vermelho" do resto do projeto — pedido explícito pra dar
-        mais destaque negativo à queda do que o neutro cinza dava). */
+        /* ---- Chips de grupo e situação (Resultado da ação). Vermelho =
+        queda de venda (única exceção à convenção "nunca vermelho" do resto
+        do projeto — pedido explícito pra dar mais destaque à queda). */
         .mdf-chip {{
             display: inline-flex; align-items: center; gap: 3px;
             font-size: 12px; font-weight: 700; padding: 2px 9px;
@@ -498,57 +483,10 @@ def aplicar_estilo() -> None:
         .mdf-chip-neutro {{ background: {config.COR_CINZA_BG}; color: {config.COR_CINZA_TEXTO}; }}
         .mdf-chip-alerta {{ background: {config.COR_AMBAR_BG}; color: {config.COR_AMBAR_TEXTO}; }}
         .mdf-chip-negativo {{ background: {config.COR_VERMELHO_BG}; color: {config.COR_VERMELHO_TEXTO}; }}
+        .mdf-chip-azul {{ background: {config.COR_AZUL_BG}; color: {config.COR_AZUL_TEXTO}; }}
+        .mdf-chip-roxo {{ background: {config.COR_ROXO_BG}; color: {config.COR_ROXO_TEXTO}; }}
+        .mdf-chip-laranja {{ background: {config.COR_LARANJA_BG}; color: {config.COR_LARANJA_TEXTO}; }}
 
-        /* ---- Cartões de estatística (Resultado da ação) — 3 tiles lado
-        a lado via st.columns(3), mesmo padrão marcador+:has() dos demais
-        cartões do projeto. min-height força os 3 a terem a mesma altura
-        mesmo quando um deles tem um texto de apoio mais curto (ex.:
-        "Faturamento mensal" tem só 1 linha, os outros 2 têm 2) — é um
-        "piso": se o conteúdo natural for maior que isso, o cartão cresce
-        normalmente, não corta nada. */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-stat-card-marker) {{
-            border-radius: 14px !important;
-            border: 1px solid #E4E7EB !important;
-            background: #FFFFFF;
-            padding: 8px 12px !important;
-            min-height: 145px;
-            box-sizing: border-box;
-        }}
-        .mdf-stat-label {{
-            font-size: 11.5px; font-weight: 600; text-transform: uppercase;
-            letter-spacing: 0.03em; color: #8A93A3; margin: 0 0 8px 0;
-        }}
-        .mdf-stat-valor {{ font-size: 24px; font-weight: 800; color: {config.COR_NAVY}; margin: 0; }}
-        .mdf-stat-valor-positivo {{ color: {config.COR_VERDE_TEXTO}; }}
-        .mdf-stat-sub {{ font-size: 12px; color: #8A93A3; margin: 6px 0 0 0; }}
-
-        /* ---- Card "Top 3 produtos que mais cresceram" e card "Deixou de
-        vender" (Resultado da ação) — mesma família de cartão branco com
-        borda; o de "deixou de vender" ganha um acento âmbar à esquerda
-        pra chamar atenção sem usar vermelho. */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-top3-card-marker) {{
-            border-radius: 14px !important;
-            border: 1px solid #E4E7EB !important;
-            background: #FFFFFF;
-            padding: 8px 12px !important;
-        }}
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-alerta-card-marker) {{
-            border-radius: 14px !important;
-            border: 1px solid #E4E7EB !important;
-            border-left: 3px solid {config.COR_AMBAR_TEXTO} !important;
-            background: #FFFFFF;
-            padding: 8px 12px !important;
-        }}
-        .mdf-rank-badge {{
-            width: 24px; height: 24px; border-radius: 50%;
-            background: {config.COR_VERDE_BG}; color: {config.COR_VERDE_TEXTO};
-            font-size: 12px; font-weight: 800;
-            display: inline-flex; align-items: center; justify-content: center;
-        }}
-        /* Ícone "⚠" do título do card "Deixou de vender" — pintado no
-        mesmo âmbar do acento da borda esquerda do card, em vez do navy
-        padrão de título, pra amarrar visualmente ícone + acento. */
-        .mdf-icone-alerta {{ color: {config.COR_AMBAR_TEXTO}; }}
 
         /* ---- Alerta de quantidade negativa (Ajuste de mix) — estoque veio
         negativo na planilha de origem (erro de digitação/exportação na loja).
@@ -573,17 +511,62 @@ def aplicar_estilo() -> None:
             height: 100%;
         }}
 
-        /* ---- Textos auxiliares (Resultado da ação) ---- */
-        .mdf-secao-titulo {{ font-size: 17px; font-weight: 700; color: {config.COR_NAVY}; margin: 0 0 4px 0; }}
-        .mdf-comparativo-legenda {{ font-size: 13px; color: #8A93A3; margin: 0 0 16px 0; }}
-        .mdf-comparativo-legenda b {{ color: #1A1A1A; font-weight: 600; }}
-        .mdf-lista-titulo {{ font-size: 14px; font-weight: 700; color: {config.COR_NAVY}; margin: 0 0 4px 0; }}
-        .mdf-par-compacto {{ font-size: 12.5px; color: #1A1A1A; margin: 4px 0 0 0; }}
-        .mdf-par-compacto .antes {{ color: #8A93A3; }}
-        .mdf-par-compacto .seta {{ color: #8A93A3; margin: 0 3px; font-size: 11px; }}
-        .mdf-par-compacto {{ font-size: 12.5px; color: #1A1A1A; margin: 4px 0 0 0; }}
-        .mdf-par-compacto .antes {{ color: #8A93A3; }}
-        .mdf-par-compacto .seta {{ color: #8A93A3; margin: 0 3px; font-size: 11px; }}
+        /* ---- Resultado da ação (Aba 3 — Conferência). Mesma escala em toda
+        a seção: espaço 4/8/12/16/24, fonte 12/14/16/20/44, cantos 12/999. Os
+        textos em <p> precisam do seletor longo: o st.markdown define a fonte
+        do <p> com prioridade maior que a de uma classe sozinha. */
+        div[data-testid="stMarkdownContainer"] p.mdf-secao-titulo {{ font-size: 28px; font-weight: 700; color: {config.COR_NAVY}; line-height: 1.2; margin: 0; }}
+        .mdf-ra-periodo {{ display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: #4B5563; margin: 0 0 8px 0; }}
+        .mdf-ra-periodo b {{ color: #1F2937; font-weight: 600; }}
+        .mdf-ra-cartao {{
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 32px; align-items: center;
+            background: #FFFFFF; border-radius: 12px; padding: 24px; margin: 0 0 16px 0;
+            box-shadow: 0 1px 2px rgba(23,55,94,.06), 0 2px 8px rgba(23,55,94,.04);
+        }}
+        .mdf-ra-principal {{ display: flex; flex-direction: column; gap: 8px; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-rotulo {{ margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #4B5563; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-valor {{ margin: 0; font-size: 44px; font-weight: 700; line-height: 1.2; }}
+        .mdf-ra-valor small {{ font-size: 16px; font-weight: 600; color: #4B5563; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-sem-base {{ font-size: 28px; color: {config.COR_NAVY}; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-frase {{ margin: 0; font-size: 16px; color: #1F2937; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-apoio {{ margin: 0; font-size: 14px; color: #4B5563; }}
+        .mdf-ra-apoio b {{ color: {config.COR_NAVY}; font-weight: 700; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-h2 {{ margin: 16px 0 4px 0; font-size: 20px; font-weight: 700; color: {config.COR_NAVY}; line-height: 1.3; }}
+        .mdf-ra-positivo {{ color: {config.COR_VERDE_TEXTO}; }}
+        .mdf-ra-negativo {{ color: {config.COR_VERMELHO_TEXTO}; }}
+        .mdf-ra-suave {{ color: #4B5563; }}
+        .mdf-ra-navy {{ color: {config.COR_NAVY}; }}
+        .mdf-ra-barras {{ display: flex; flex-direction: column; gap: 16px; }}
+        .mdf-ra-barra-topo {{ display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; font-weight: 600; }}
+        .mdf-ra-barra {{ height: 8px; background: {config.COR_CINZA_BG}; border-radius: 999px; overflow: hidden; }}
+        .mdf-ra-barra span {{ display: block; height: 100%; border-radius: 999px; }}
+        .mdf-ra-tabela-caixa {{ overflow-x: auto; background: #FFFFFF; border-radius: 12px; padding: 8px; margin: 8px 0; }}
+        .mdf-ra-tabela {{ width: 100%; min-width: 760px; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }}
+        .mdf-ra-tabela th {{
+            padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 600; letter-spacing: .04em;
+            text-transform: uppercase; color: #4B5563; border: 0; border-bottom: 1px solid #E5E7EB; white-space: nowrap;
+        }}
+        .mdf-ra-tabela td {{ padding: 12px 16px; border: 0; border-bottom: 1px solid #F0F1F4; vertical-align: middle; color: #1F2937; }}
+        .mdf-ra-tabela tr:last-child td {{ border-bottom: 0; }}
+        .mdf-ra-tabela tbody tr:hover td {{ background: #F9FAFB; }}
+        .mdf-ra-tabela th.mdf-ra-num, .mdf-ra-tabela td.mdf-ra-num {{ text-align: right; white-space: nowrap; }}
+        .mdf-ra-tabela td.mdf-ra-positivo {{ color: {config.COR_VERDE_TEXTO}; }}
+        .mdf-ra-tabela td.mdf-ra-negativo {{ color: {config.COR_VERMELHO_TEXTO}; }}
+        .mdf-ra-tabela td.mdf-ra-suave {{ color: #4B5563; }}
+        .mdf-ra-produto {{ font-weight: 600; }}
+        .mdf-ra-tabela td.mdf-ra-forte {{ font-weight: 700; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-vazio {{ margin: 8px 0; padding: 32px 16px; text-align: center; font-size: 14px; color: #4B5563; background: #FFFFFF; border-radius: 12px; }}
+        /* Dica ao passar o mouse (ou focar pelo teclado) */
+        .mdf-dica {{ position: relative; display: inline-block; cursor: help; font-size: 14px; font-weight: 400; color: #4B5563; letter-spacing: 0; }}
+        .mdf-dica:focus-visible {{ outline: 2px solid {config.COR_AZUL_TEXTO}; outline-offset: 2px; border-radius: 999px; }}
+        .mdf-dica-caixa {{
+            position: absolute; z-index: 20; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: 240px;
+            padding: 12px; border-radius: 12px; background: {config.COR_NAVY}; color: #FFFFFF;
+            font-size: 12px; font-weight: 400; line-height: 1.5; text-transform: none; text-align: left; white-space: normal;
+            box-shadow: 0 4px 16px rgba(23,55,94,.2); display: none;
+        }}
+        .mdf-dica-esquerda .mdf-dica-caixa {{ left: auto; right: 0; transform: none; }}
+        .mdf-dica:hover .mdf-dica-caixa, .mdf-dica:focus .mdf-dica-caixa {{ display: block; }}
 
         /* ---- Cartões de foto (Aba 3 — Conferência) ----
 
@@ -975,89 +958,3 @@ def badge_frentes(frentes) -> str:
     if valor >= 2:
         return f'<span class="mdf-badge mdf-badge-frentes">Frentes: {valor}</span>'
     return f"Frentes: {valor}"
-
-
-# ---------------------------------------------------------------------------
-# Resultado da ação (Aba 3 — Conferência)
-# ---------------------------------------------------------------------------
-
-def formatar_rs(valor) -> str:
-    """Formata um número como moeda brasileira (R$ 1.234,56), sem
-    depender do módulo locale (evita efeito colateral global num processo
-    Streamlit compartilhado)."""
-    try:
-        valor = float(valor)
-    except (TypeError, ValueError):
-        valor = 0.0
-    sinal = "-" if valor < 0 else ""
-    texto = f"{abs(valor):,.2f}"
-    texto = texto.replace(",", "§").replace(".", ",").replace("§", ".")
-    return f"{sinal}R$ {texto}"
-
-
-def cartao_stat(titulo: str, valor_html: str, sub: str | None = None) -> None:
-    """Renderiza um cartão de estatística da Aba 3 — Resultado da ação
-    (rótulo em caixa alta + valor em destaque + legenda opcional embaixo).
-    `valor_html` já vem pronto (o chamador monta o HTML do valor, o que
-    permite compor com chip ao lado, classe de cor condicional etc.) —
-    mesmo padrão de "container + marcador invisível + CSS via :has()" já
-    usado em cartao_foto()."""
-    with st.container():
-        st.markdown('<span class="mdf-stat-card-marker"></span>', unsafe_allow_html=True)
-        st.markdown(f'<p class="mdf-stat-label">{titulo}</p>', unsafe_allow_html=True)
-        st.markdown(valor_html, unsafe_allow_html=True)
-        if sub:
-            st.markdown(f'<p class="mdf-stat-sub">{sub}</p>', unsafe_allow_html=True)
-
-
-def chip_crescimento_rs(crescimento_rs) -> str:
-    """Chip de crescimento em R$ — usado no card Top 3 (só lista produtos
-    com crescimento positivo, por isso sempre no tom verde)."""
-    return f'<span class="mdf-chip mdf-chip-positivo">▲ +{formatar_rs(crescimento_rs)}</span>'
-
-
-def chip_variacao_produto(status: str, crescimento_rs, crescimento_pct) -> str:
-    """Chip de variação de um produto na lista "produto a produto" do
-    Resultado da ação — texto e cor dependem do status calculado por
-    data_loader.montar_tabela_resultado_acao(). Verde = cresceu, vermelho =
-    queda real de venda (pedido explícito de destaque negativo — única
-    exceção à convenção "nunca vermelho" do resto do projeto), cinza =
-    ausência de dado (sem venda no período, sem dado, flat em 0), âmbar =
-    "deixou de vender" (produto que saiu do mix de verdade)."""
-    if status == "novo":
-        return '<span class="mdf-chip mdf-chip-positivo">novo</span>'
-    if status == "deixou_de_vender":
-        return '<span class="mdf-chip mdf-chip-alerta">deixou de vender</span>'
-    if status == "sem_venda_periodo":
-        return '<span class="mdf-chip mdf-chip-neutro">sem venda</span>'
-    if status == "sem_dado":
-        return '<span class="mdf-chip mdf-chip-neutro">sem dado</span>'
-
-    # status == "normal" — teve venda no período, mas pode não ter tido
-    # faturamento "antes" pra calcular uma % (produto do ajuste de mix
-    # sem correspondência no Estoque) — nesse caso mostra a variação em
-    # R$ em vez de %, sem quebrar a exibição.
-    if crescimento_pct is None:
-        if crescimento_rs > 0:
-            return f'<span class="mdf-chip mdf-chip-positivo">▲ +{formatar_rs(crescimento_rs)}</span>'
-        if crescimento_rs < 0:
-            return f'<span class="mdf-chip mdf-chip-negativo">▼ {formatar_rs(crescimento_rs)}</span>'
-        return '<span class="mdf-chip mdf-chip-neutro">— sem variação</span>'
-
-    if crescimento_pct > 0:
-        return f'<span class="mdf-chip mdf-chip-positivo">▲ +{crescimento_pct:.0f}%</span>'
-    if crescimento_pct < 0:
-        return f'<span class="mdf-chip mdf-chip-negativo">▼ {crescimento_pct:.0f}%</span>'
-    return '<span class="mdf-chip mdf-chip-neutro">— 0%</span>'
-
-
-def badge_inline_status_resultado(status: str) -> str:
-    """Badge inline pequeno junto ao nome do produto (Resultado da ação —
-    lista e Top 3) — só para os status que merecem destaque visual extra
-    além do chip de variação: "novo" e "deixou_de_vender". Demais status
-    retornam string vazia (sem badge adicional)."""
-    if status == "novo":
-        return '<span class="mdf-badge-inline mdf-badge-inline-novo">novo</span>'
-    if status == "deixou_de_vender":
-        return '<span class="mdf-badge-inline mdf-badge-inline-deixou">deixou de vender</span>'
-    return ""
