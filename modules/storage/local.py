@@ -105,3 +105,12 @@ class LocalFolderStorage(OneDriveStorage):
             caminho_rel = entrada.relative_to(self.raiz).as_posix()
             resultado.append(caminho_rel)
         return resultado
+
+    def listar_todos_arquivos_com_versao(self, prefixo: str = "") -> dict[str, str | None]:
+        # Data de modificação (ns) + tamanho: muda sempre que o arquivo é
+        # regravado — equivalente local do ETag do Spaces.
+        resultado = {}
+        for caminho_rel in self.listar_todos_arquivos(prefixo):
+            info = (self.raiz / caminho_rel).stat()
+            resultado[caminho_rel] = f"{info.st_mtime_ns}-{info.st_size}"
+        return resultado

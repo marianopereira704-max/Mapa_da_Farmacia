@@ -82,8 +82,42 @@ storage = obter_storage()
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=600, show_spinner="Carregando lista de lojas...")
+def _inventario_e_assinaturas_cache(_storage, versao_cache: int) -> tuple[dict, str]:
+    return inventario.descobrir_inventario_e_assinaturas(_storage)
+
+
 def _descobrir_inventario_cache(_storage, versao_cache: int) -> dict:
-    return inventario.descobrir_inventario(_storage)
+    return _inventario_e_assinaturas_cache(_storage, versao_cache)[0]
+
+
+# Chaves de cache dos dados pesados (planilhas, base nacional, imagens):
+# em vez de versao_cache — que muda a cada entrada em Selecionar Loja/
+# Análise e forçava baixar e reprocessar TUDO de novo, mesmo sem nenhuma
+# mudança —, usam a assinatura do ciclo/base vinda do inventário, que só
+# muda quando algum arquivo daquele ciclo (ou da base) é criado, alterado
+# ou apagado. Assim um upload novo continua aparecendo na próxima
+# atualização do inventário, mas navegar sem mudanças não baixa nada de
+# novo. Se o inventário falhar (rede) ou o ciclo não estiver nele, cai no
+# comportamento antigo (versao_cache), que nunca mostra dado velho.
+def _assinatura_ciclo(caminho_ciclo: str) -> str:
+    versao_cache = st.session_state["versao_cache"]
+    try:
+        inventario_atual, _ = _inventario_e_assinaturas_cache(storage, versao_cache)
+    except StorageError:
+        return f"versao-{versao_cache}"
+    loja, _, mes = caminho_ciclo.partition("/")
+    info_ciclo = inventario_atual.get(loja, {}).get(mes)
+    if not info_ciclo:
+        return f"versao-{versao_cache}"
+    return info_ciclo["assinatura"]
+
+
+def _assinatura_base_nacional() -> str:
+    versao_cache = st.session_state["versao_cache"]
+    try:
+        return _inventario_e_assinaturas_cache(storage, versao_cache)[1]
+    except StorageError:
+        return f"versao-{versao_cache}"
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +140,7 @@ def _carregar_lojas_api() -> list[lojas_api.Loja]:
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=600, show_spinner="Carregando dados da loja...")
-def _carregar_dados_loja(_storage, caminho_ciclo: str, versao_cache: int):
+def _carregar_dados_loja(_storage, caminho_ciclo: str, assinatura: str):
     # Lista a pasta do ciclo UMA vez e reaproveita nas duas chamadas de
     # localizar_arquivo abaixo (mapa_farmacia + estoque) — evita listar a
     # mesma pasta duas vezes (cada storage.listar_pasta é uma chamada de
@@ -128,7 +162,7 @@ def _carregar_dados_loja(_storage, caminho_ciclo: str, versao_cache: int):
 
 
 @st.cache_data(ttl=3600, show_spinner="Carregando base nacional de demanda...")
-def _carregar_base_nacional(_storage, versao_cache: int):
+def _carregar_base_nacional(_storage, assinatura: str):
     arq_base = localizar_arquivo(_storage, config.BASE_NACIONAL_FOLDER_NAME, config.BASE_NACIONAL_SPEC, "base_mercado")
     return dl.carregar_base_nacional(io.BytesIO(arq_base.conteudo), extensao=arq_base.extensao)
 
@@ -137,7 +171,7 @@ def _carregar_base_nacional(_storage, versao_cache: int):
     ttl=600,
     show_spinner="Carregando imagem (arquivos grandes podem levar alguns segundos)...",
 )
-def _carregar_imagem_conferencia(_storage, caminho_ciclo: str, chave: str, versao_cache: int):
+def _carregar_imagem_conferencia(_storage, caminho_ciclo: str, chave: str, assinatura: str):
     """Localiza e carrega uma imagem da Aba Conferência (foto_antes/
     modelo/foto_depois). Retorna (bytes_imagem, mime, mensagem_vazio):
       - achou e é jpg/png: (bytes, "image/jpeg"|"image/png", None)
@@ -169,7 +203,7 @@ def _carregar_imagem_conferencia(_storage, caminho_ciclo: str, chave: str, versa
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _carregar_preview_modelo(_storage, caminho_ciclo: str, variante: str, versao_cache: int):
+def _carregar_preview_modelo(_storage, caminho_ciclo: str, variante: str, assinatura: str):
     """variante: 'tela' ou 'impressao'. Lê o preview já pronto (gerado no
     upload, ou pela migração única das lojas antigas) — nunca baixa nem
     processa o arquivo Modelo original.
@@ -197,7 +231,7 @@ def _carregar_preview_modelo(_storage, caminho_ciclo: str, variante: str, versao
 
 
 @st.cache_data(ttl=600, show_spinner="Carregando resultado da ação...")
-def _carregar_dados_resultado_acao(_storage, caminho_ciclo: str, versao_cache: int) -> dict:
+def _carregar_dados_resultado_acao(_storage, caminho_ciclo: str, assinatura: str) -> dict:
     """Carrega os dados necessários para a feature Resultado da ação (Aba
     3 — Conferência). Só monta os DataFrames quando os DOIS arquivos
     "depois" (Retrato de Vendas + Estoque atualizado) já foram enviados —
@@ -642,6 +676,19 @@ _ESTILO_CAMPO_LOJA = {
 }
 
 
+def _meses_para_upload(mes_atual: str, meses_anteriores: int) -> list[str]:
+    """['2026-11', '2026-10', '2026-09'] para mes_atual='2026-11' e
+    meses_anteriores=2 — do mais recente pro mais antigo."""
+    ano, mes = (int(p) for p in mes_atual.split("-"))
+    meses = []
+    for _ in range(meses_anteriores + 1):
+        meses.append(f"{ano:04d}-{mes:02d}")
+        mes -= 1
+        if mes == 0:
+            ano, mes = ano - 1, 12
+    return meses
+
+
 # ---------------------------------------------------------------------------
 # Página: Upload
 # ---------------------------------------------------------------------------
@@ -835,23 +882,61 @@ def pagina_upload() -> None:
             st.markdown('<span class="mdf-campo-consultor-marker"></span>', unsafe_allow_html=True)
             upload_consultor = st.text_input("Consultor", key="upload_consultor")
 
-        st.markdown("&nbsp;", unsafe_allow_html=True)
-
         # Contexto de "completar um ciclo específico" — definido pelo botão
         # "Upload" de um cartão de mês já existente (página Selecionar
-        # Loja). Enquanto ativo: cada campo de arquivo mostra ✅ (já tem
-        # dado) ou ⚠️ (falta), usando o mesmo inventário que já monta o
-        # checklist daquele cartão, e o envio grava NESSE mês em vez do
-        # atual (ver ano_mes mais abaixo). Fora desse fluxo (Upload pela
-        # barra lateral, ou "Enviar novo mês"), os dois ficam None e tudo
-        # se comporta exatamente como antes.
+        # Loja). Só pré-seleciona esse mês no campo "Mês de referência"
+        # abaixo (e a loja no campo Loja, ver loja_prefill) — quem decide
+        # pra qual mês o envio vai é sempre o campo.
         ano_mes_contexto = st.session_state.get("_upload_ano_mes_contexto")
         loja_contexto = st.session_state.get("_upload_ano_mes_contexto_loja")
+
+        # ---- Mês de referência ----
+        # Padrão: mês atual. Permite também os
+        # config.MESES_ANTERIORES_NO_UPLOAD meses anteriores (ex.: enviar
+        # o Retrato de Vendas do ciclo passado, ou uma loja que não chegou
+        # a enviar nada no mês anterior e por isso não tem cartão daquele
+        # mês em Selecionar Loja). Mês futuro nunca é oferecido. O mês do
+        # contexto acima entra na lista mesmo se for mais antigo que isso.
+        mes_atual = date.today().strftime("%Y-%m")
+        opcoes_mes = _meses_para_upload(mes_atual, config.MESES_ANTERIORES_NO_UPLOAD)
+        if ano_mes_contexto and ano_mes_contexto not in opcoes_mes:
+            opcoes_mes = sorted(opcoes_mes + [ano_mes_contexto], reverse=True)
+        if loja_prefill:
+            # Chegou agora de um botão de Selecionar Loja/Análise:
+            # "Enviar novo mês" (contexto None -> mês atual) ou "Upload" de
+            # um cartão (contexto = mês do cartão).
+            st.session_state["upload_mes_destino"] = ano_mes_contexto or mes_atual
+        if st.session_state.get("upload_mes_destino") not in opcoes_mes:
+            st.session_state["upload_mes_destino"] = mes_atual
+        c_mes, _c_vazio = st.columns(2)
+        with c_mes:
+            mes_destino = st.selectbox(
+                "Mês de referência",
+                opcoes_mes,
+                format_func=styles.mes_legivel,
+                key="upload_mes_destino",
+            )
+            if mes_destino != mes_atual:
+                st.info(
+                    f"Os arquivos serão gravados em **{styles.mes_legivel(mes_destino)}**, "
+                    f"não no mês atual."
+                )
+
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+
+        # Mês diferente do atual (escolhido no campo ou vindo de um cartão):
+        # cada campo de arquivo mostra ✅ (já tem dado) ou ⚠️ (falta),
+        # usando o mesmo inventário que já monta o checklist dos cartões de
+        # Selecionar Loja. Loja: a confirmada no campo, ou a do contexto
+        # enquanto a sugestão pré-preenchida ainda não foi clicada (ver
+        # comentário do Consultor acima). No fluxo padrão (mês atual, sem
+        # contexto) nada disso roda, igual a antes.
+        loja_alvo = upload_loja.strip() or loja_contexto
         arquivos_existentes_contexto = None
         ajuste_mix_existe_contexto = False
-        if ano_mes_contexto and loja_contexto:
+        if loja_alvo and (mes_destino != mes_atual or mes_destino == ano_mes_contexto):
             inventario_contexto = _descobrir_inventario_cache(storage, st.session_state["versao_cache"])
-            ciclo_contexto = inventario_contexto.get(loja_contexto, {}).get(ano_mes_contexto)
+            ciclo_contexto = inventario_contexto.get(loja_alvo, {}).get(mes_destino)
             if ciclo_contexto:
                 arquivos_existentes_contexto = ciclo_contexto.get("arquivos", {})
                 # "Retrato de Vendas" e "Estoque atualizado" (Resultado da
@@ -862,7 +947,7 @@ def pagina_upload() -> None:
                 # direto aqui, só nesse contexto específico (1 chamada
                 # extra, não em toda renderização da página).
                 ajuste_mix_existe_contexto = (
-                    dl.carregar_ajuste_mix_salvo(storage, f"{loja_contexto}/{ano_mes_contexto}") is not None
+                    dl.carregar_ajuste_mix_salvo(storage, f"{loja_alvo}/{mes_destino}") is not None
                 )
 
         chaves_arquivos = [
@@ -896,15 +981,11 @@ def pagina_upload() -> None:
             elif not arquivos_preenchidos:
                 st.warning("Selecione ao menos um arquivo antes de enviar.")
             else:
-                # Ciclo (mês) normalmente é sempre o mês/ano atual no
-                # momento do envio (ver item 4 do pedido de mudança
-                # original: "organizado já de maneira automática
-                # internamente, não deve aparecer para o usuário") — a
-                # ÚNICA exceção é o contexto acima (botão "Upload" de um
-                # cartão de ciclo já existente), que direciona o envio
-                # pro mês daquele cartão em vez do atual, pra completar
-                # exatamente aquele ciclo.
-                ano_mes = ano_mes_contexto or date.today().strftime("%Y-%m")
+                # Ciclo (mês) = o do campo "Mês de referência" (mês atual
+                # por padrão). Enviar pra um mês que já tem arquivos passa
+                # pela MESMA confirmação de sobrescrita de sempre (ver
+                # conflitos abaixo) — nada é substituído sem o "Sim".
+                ano_mes = mes_destino
                 loja_limpa = upload_loja.strip()
 
                 falhas = []
@@ -1395,7 +1476,7 @@ def _contexto_analise():
 
     _pag_t1 = time.perf_counter()  # >>> DIAGNOSTICO
     try:
-        mapa_df, estoque_df = _carregar_dados_loja(storage, ciclo_selecionado, st.session_state["versao_cache"])
+        mapa_df, estoque_df = _carregar_dados_loja(storage, ciclo_selecionado, _assinatura_ciclo(ciclo_selecionado))
     except ArquivoObrigatorioAusenteError as e:
         erro_dados = (
             f"Arquivo obrigatório **{e.chave}** não encontrado em `{e.pasta}`. "
@@ -1416,7 +1497,7 @@ def _contexto_analise():
     base_df = None
     if erro_dados is None:
         try:
-            base_df = _carregar_base_nacional(storage, st.session_state["versao_cache"])
+            base_df = _carregar_base_nacional(storage, _assinatura_base_nacional())
         except ArquivoObrigatorioAusenteError:
             erro_dados = (
                 f"A base nacional de demanda não foi encontrada na pasta "
@@ -1713,7 +1794,7 @@ def pagina_sugestao_gc() -> None:
             _gc_t2 = time.perf_counter()  # >>> DIAGNOSTICO
             print(f"[GC-TAMANHO] ANTES de chamar _carregar_preview_modelo variante=tela ciclo={ciclo_selecionado!r}", flush=True)  # >>> DIAGNOSTICO
             imagem_modelo_gc, mime_modelo_gc, msg_modelo_gc = _carregar_preview_modelo(
-                storage, ciclo_selecionado, "tela", st.session_state["versao_cache"]
+                storage, ciclo_selecionado, "tela", _assinatura_ciclo(ciclo_selecionado)
             )
             print(f"[GC-TEMPO] 3 carregar_imagem_conferencia: {time.perf_counter() - _gc_t2:.2f}s", flush=True)  # >>> DIAGNOSTICO
 
@@ -1760,7 +1841,7 @@ def pagina_sugestao_gc() -> None:
                 _gc_t5 = time.perf_counter()  # >>> DIAGNOSTICO
                 try:  # >>> DIAGNOSTICO
                     imagem_modelo_impressao, _, _ = _carregar_preview_modelo(
-                        storage, ciclo_selecionado, "impressao", st.session_state["versao_cache"]
+                        storage, ciclo_selecionado, "impressao", _assinatura_ciclo(ciclo_selecionado)
                     )
                 except BaseException as e:  # >>> DIAGNOSTICO
                     print(f"[GC-EXCEPTION] impressao: tipo={type(e).__module__}.{type(e).__name__} msg={e!r}", flush=True)  # >>> DIAGNOSTICO
@@ -1847,13 +1928,13 @@ def pagina_conferencia() -> None:
     print(f"[PAGINA-TEMPO] aba_conf INICIO (desde inicio da pagina): {time.perf_counter() - _pag_t0:.2f}s", flush=True)  # >>> DIAGNOSTICO
     _conf_t0 = time.perf_counter()  # >>> DIAGNOSTICO
     imagem_antes, mime_antes, msg_antes = _carregar_imagem_conferencia(
-        storage, ciclo_selecionado, "foto_antes", st.session_state["versao_cache"]
+        storage, ciclo_selecionado, "foto_antes", _assinatura_ciclo(ciclo_selecionado)
     )
     imagem_modelo, mime_modelo, msg_modelo = _carregar_preview_modelo(
-        storage, ciclo_selecionado, "tela", st.session_state["versao_cache"]
+        storage, ciclo_selecionado, "tela", _assinatura_ciclo(ciclo_selecionado)
     )
     imagem_depois, mime_depois, msg_depois = _carregar_imagem_conferencia(
-        storage, ciclo_selecionado, "foto_depois", st.session_state["versao_cache"]
+        storage, ciclo_selecionado, "foto_depois", _assinatura_ciclo(ciclo_selecionado)
     )
     print(f"[PAGINA-TEMPO] aba_conf 3 imagens carregadas: {time.perf_counter() - _conf_t0:.2f}s", flush=True)  # >>> DIAGNOSTICO
 
@@ -1885,7 +1966,7 @@ def pagina_conferencia() -> None:
             dados_resultado = None
             try:
                 dados_resultado = _carregar_dados_resultado_acao(
-                    storage, ciclo_selecionado, st.session_state["versao_cache"]
+                    storage, ciclo_selecionado, _assinatura_ciclo(ciclo_selecionado)
                 )
             except dl.PlanilhaInvalidaError as e:
                 erro_resultado = (
@@ -1981,7 +2062,10 @@ pg = st.navigation(
 # dados desatualizados sem perceber. Em vez disso, entrar em "Selecionar
 # Loja" ou "Análise" (vindo de QUALQUER outro grupo) bumpa versao_cache
 # sozinho — esses dois grupos são os que realmente dependem do inventário
-# estar fresco. Não chama st.cache_data.clear() (isso limparia também o
+# estar fresco. versao_cache hoje só refaz o INVENTÁRIO (barato: 1 listagem
+# + 1 índice, ver modules/inventario.py); os dados pesados usam a
+# assinatura dos arquivos (ver _assinatura_ciclo) e só são baixados de novo
+# se algo mudou de fato. Não chama st.cache_data.clear() (isso limparia também o
 # cache da API do TI, que tem TTL próprio de 1h e não precisa ser forçado
 # a cada navegação). Trocar de sub-página DENTRO de Análise (Ajuste de mix
 # <-> Sugestão de GC <-> Conferência) NÃO bumpa — mesmo comportamento do
@@ -2018,6 +2102,7 @@ with st.sidebar:
                         # página Upload).
                         st.session_state["_upload_ano_mes_contexto"] = None
                         st.session_state["_upload_ano_mes_contexto_loja"] = None
+                        st.session_state.pop("upload_mes_destino", None)  # volta pro mês atual
                         st.switch_page(PAGINA_UPLOAD)
                     elif grupo_item == "Selecionar Loja":
                         st.switch_page(PAGINA_SELECIONAR_LOJA)

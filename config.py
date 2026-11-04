@@ -24,6 +24,11 @@ BASE_NACIONAL_FOLDER_NAME = "_Base"
 # de cada ciclo, README). Não há lista fixa de lojas/meses — tudo é
 # descoberto dinamicamente a partir do que existe no armazenamento.
 
+# Quantos meses ANTERIORES ao atual o campo "Mês de referência" da página
+# Upload oferece (além do mês atual, que é o padrão). Mês futuro nunca é
+# oferecido.
+MESES_ANTERIORES_NO_UPLOAD = 2
+
 # ---------------------------------------------------------------------------
 # Nomes de arquivo padronizados (dentro da pasta [COD Loja]/[AAAA-MM])
 # ---------------------------------------------------------------------------

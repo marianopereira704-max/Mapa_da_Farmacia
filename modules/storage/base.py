@@ -114,3 +114,18 @@ class OneDriveStorage(ABC):
         nunca levanta StorageError por ausência (o caso "armazenamento
         vazio" é um estado válido, não um erro).
         """
+
+    def listar_todos_arquivos_com_versao(self, prefixo: str = "") -> dict[str, str | None]:
+        """Mesma listagem de listar_todos_arquivos(), mas devolvendo
+        {caminho: versão}, onde "versão" é um identificador que MUDA
+        sempre que o conteúdo do arquivo muda (ETag no Spaces, data de
+        modificação + tamanho na pasta local). É o que permite ao
+        inventário (ver modules/inventario.py) reaproveitar o que já leu
+        antes sem arriscar mostrar dado velho: versão igual = conteúdo
+        igual.
+
+        Implementação padrão (backends sem essa informação barata, ex.:
+        Graph API): versão None para todos — quem usa trata None como
+        "não sei, leia de novo", que é exatamente o comportamento antigo.
+        """
+        return {caminho: None for caminho in self.listar_todos_arquivos(prefixo)}

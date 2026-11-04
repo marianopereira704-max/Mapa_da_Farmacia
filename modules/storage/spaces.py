@@ -237,6 +237,13 @@ class DigitalOceanSpacesStorage(OneDriveStorage):
             raise StorageError(f"Falha de rede ao apagar arquivo '{caminho_relativo}': {e}") from e
 
     def listar_todos_arquivos(self, prefixo: str = "") -> list[str]:
+        return list(self.listar_todos_arquivos_com_versao(prefixo))
+
+    def listar_todos_arquivos_com_versao(self, prefixo: str = "") -> dict[str, str | None]:
+        # O ETag já vem de graça em cada item do list_objects_v2 (mesma
+        # chamada, nenhuma requisição extra) e muda sempre que o objeto é
+        # regravado com conteúdo diferente.
+        #
         # SEM Delimiter -- list_objects_v2 retorna TODOS os objetos sob o
         # prefixo de uma vez (achatado, sem estrutura de pastas), em vez de
         # 1 chamada por subpasta. O paginador cuida automaticamente de
@@ -253,7 +260,7 @@ class DigitalOceanSpacesStorage(OneDriveStorage):
             paginador = self._cliente.get_paginator("list_objects_v2")
             paginas = paginador.paginate(Bucket=self.bucket, Prefix=prefixo_busca)
 
-            resultado: list[str] = []
+            resultado: dict[str, str | None] = {}
             for pagina in paginas:
                 for obj in pagina.get("Contents", []):
                     chave_completa = obj["Key"]
@@ -262,7 +269,7 @@ class DigitalOceanSpacesStorage(OneDriveStorage):
                     # arquivos de verdade.
                     if chave_completa == prefixo_busca or chave_completa.endswith("/"):
                         continue
-                    resultado.append(self._para_relativo(chave_completa))
+                    resultado[self._para_relativo(chave_completa)] = obj.get("ETag")
             return resultado
         except ClientError as e:
             raise StorageError(f"Falha ao listar arquivos sob '{prefixo}': {e}") from e
