@@ -690,19 +690,6 @@ _ESTILO_CAMPO_LOJA = {
 }
 
 
-def _meses_para_upload(mes_atual: str, meses_anteriores: int) -> list[str]:
-    """['2026-11', '2026-10', '2026-09'] para mes_atual='2026-11' e
-    meses_anteriores=2 — do mais recente pro mais antigo."""
-    ano, mes = (int(p) for p in mes_atual.split("-"))
-    meses = []
-    for _ in range(meses_anteriores + 1):
-        meses.append(f"{ano:04d}-{mes:02d}")
-        mes -= 1
-        if mes == 0:
-            ano, mes = ano - 1, 12
-    return meses
-
-
 # ---------------------------------------------------------------------------
 # Página: Upload
 # ---------------------------------------------------------------------------
@@ -896,61 +883,23 @@ def pagina_upload() -> None:
             st.markdown('<span class="mdf-campo-consultor-marker"></span>', unsafe_allow_html=True)
             upload_consultor = st.text_input("Consultor", key="upload_consultor")
 
-        # Contexto de "completar um ciclo específico" — definido pelo botão
-        # "Upload" de um cartão de mês já existente (página Selecionar
-        # Loja). Só pré-seleciona esse mês no campo "Mês de referência"
-        # abaixo (e a loja no campo Loja, ver loja_prefill) — quem decide
-        # pra qual mês o envio vai é sempre o campo.
-        ano_mes_contexto = st.session_state.get("_upload_ano_mes_contexto")
-        loja_contexto = st.session_state.get("_upload_ano_mes_contexto_loja")
-
-        # ---- Mês de referência ----
-        # Padrão: mês atual. Permite também os
-        # config.MESES_ANTERIORES_NO_UPLOAD meses anteriores (ex.: enviar
-        # o Retrato de Vendas do ciclo passado, ou uma loja que não chegou
-        # a enviar nada no mês anterior e por isso não tem cartão daquele
-        # mês em Selecionar Loja). Mês futuro nunca é oferecido. O mês do
-        # contexto acima entra na lista mesmo se for mais antigo que isso.
-        mes_atual = date.today().strftime("%Y-%m")
-        opcoes_mes = _meses_para_upload(mes_atual, config.MESES_ANTERIORES_NO_UPLOAD)
-        if ano_mes_contexto and ano_mes_contexto not in opcoes_mes:
-            opcoes_mes = sorted(opcoes_mes + [ano_mes_contexto], reverse=True)
-        if loja_prefill:
-            # Chegou agora de um botão de Selecionar Loja/Análise:
-            # "Enviar novo mês" (contexto None -> mês atual) ou "Upload" de
-            # um cartão (contexto = mês do cartão).
-            st.session_state["upload_mes_destino"] = ano_mes_contexto or mes_atual
-        if st.session_state.get("upload_mes_destino") not in opcoes_mes:
-            st.session_state["upload_mes_destino"] = mes_atual
-        c_mes, _c_vazio = st.columns(2)
-        with c_mes:
-            mes_destino = st.selectbox(
-                "Mês de referência",
-                opcoes_mes,
-                format_func=styles.mes_legivel,
-                key="upload_mes_destino",
-            )
-            if mes_destino != mes_atual:
-                st.info(
-                    f"Os arquivos serão gravados em **{styles.mes_legivel(mes_destino)}**, "
-                    f"não no mês atual."
-                )
-
         st.markdown("&nbsp;", unsafe_allow_html=True)
 
-        # Mês diferente do atual (escolhido no campo ou vindo de um cartão):
-        # cada campo de arquivo mostra ✅ (já tem dado) ou ⚠️ (falta),
-        # usando o mesmo inventário que já monta o checklist dos cartões de
-        # Selecionar Loja. Loja: a confirmada no campo, ou a do contexto
-        # enquanto a sugestão pré-preenchida ainda não foi clicada (ver
-        # comentário do Consultor acima). No fluxo padrão (mês atual, sem
-        # contexto) nada disso roda, igual a antes.
-        loja_alvo = upload_loja.strip() or loja_contexto
+        # Contexto de "completar um ciclo específico" — definido pelo botão
+        # "Upload" de um cartão de mês já existente (página Selecionar
+        # Loja). Enquanto ativo: cada campo de arquivo mostra ✅ (já tem
+        # dado) ou ⚠️ (falta), usando o mesmo inventário que já monta o
+        # checklist daquele cartão, e o envio grava NESSE mês em vez do
+        # atual (ver ano_mes mais abaixo). Fora desse fluxo (Upload pela
+        # barra lateral, ou "Enviar novo mês"), os dois ficam None e tudo
+        # se comporta exatamente como antes.
+        ano_mes_contexto = st.session_state.get("_upload_ano_mes_contexto")
+        loja_contexto = st.session_state.get("_upload_ano_mes_contexto_loja")
         arquivos_existentes_contexto = None
         ajuste_mix_existe_contexto = False
-        if loja_alvo and (mes_destino != mes_atual or mes_destino == ano_mes_contexto):
+        if ano_mes_contexto and loja_contexto:
             inventario_contexto = _descobrir_inventario_cache(storage, st.session_state["versao_cache"])
-            ciclo_contexto = inventario_contexto.get(loja_alvo, {}).get(mes_destino)
+            ciclo_contexto = inventario_contexto.get(loja_contexto, {}).get(ano_mes_contexto)
             if ciclo_contexto:
                 arquivos_existentes_contexto = ciclo_contexto.get("arquivos", {})
                 # "Retrato de Vendas" e "Estoque atualizado" (Resultado da
@@ -961,7 +910,7 @@ def pagina_upload() -> None:
                 # direto aqui, só nesse contexto específico (1 chamada
                 # extra, não em toda renderização da página).
                 ajuste_mix_existe_contexto = (
-                    dl.carregar_ajuste_mix_salvo(storage, f"{loja_alvo}/{mes_destino}") is not None
+                    dl.carregar_ajuste_mix_salvo(storage, f"{loja_contexto}/{ano_mes_contexto}") is not None
                 )
 
         chaves_arquivos = [
@@ -995,11 +944,15 @@ def pagina_upload() -> None:
             elif not arquivos_preenchidos:
                 st.warning("Selecione ao menos um arquivo antes de enviar.")
             else:
-                # Ciclo (mês) = o do campo "Mês de referência" (mês atual
-                # por padrão). Enviar pra um mês que já tem arquivos passa
-                # pela MESMA confirmação de sobrescrita de sempre (ver
-                # conflitos abaixo) — nada é substituído sem o "Sim".
-                ano_mes = mes_destino
+                # Ciclo (mês) normalmente é sempre o mês/ano atual no
+                # momento do envio (ver item 4 do pedido de mudança
+                # original: "organizado já de maneira automática
+                # internamente, não deve aparecer para o usuário") — a
+                # ÚNICA exceção é o contexto acima (botão "Upload" de um
+                # cartão de ciclo já existente), que direciona o envio
+                # pro mês daquele cartão em vez do atual, pra completar
+                # exatamente aquele ciclo.
+                ano_mes = ano_mes_contexto or date.today().strftime("%Y-%m")
                 loja_limpa = upload_loja.strip()
 
                 falhas = []
@@ -2116,7 +2069,6 @@ with st.sidebar:
                         # página Upload).
                         st.session_state["_upload_ano_mes_contexto"] = None
                         st.session_state["_upload_ano_mes_contexto_loja"] = None
-                        st.session_state.pop("upload_mes_destino", None)  # volta pro mês atual
                         st.switch_page(PAGINA_UPLOAD)
                     elif grupo_item == "Selecionar Loja":
                         st.switch_page(PAGINA_SELECIONAR_LOJA)
