@@ -407,7 +407,7 @@ def _renderizar_resultado_acao(
     chave_situacao = f"resultado_situacao::{ciclo_selecionado}"
 
     st.markdown(
-        '<p class="mdf-ra-h2">Por grupo</p><p class="mdf-ra-apoio">Clique num grupo para filtrar a lista.</p>',
+        '<p class="mdf-ra-h2">Por grupo</p>',
         unsafe_allow_html=True,
     )
     resultado_tela.filtro_clicavel("cards", resultado_tela.itens_cards(resultado), chave_grupo)
@@ -418,11 +418,7 @@ def _renderizar_resultado_acao(
 
     c_titulo, c_limpar = st.columns([0.8, 0.2], vertical_alignment="bottom")
     with c_titulo:
-        st.markdown(
-            '<p class="mdf-ra-h2">Produto a produto</p>'
-            '<p class="mdf-ra-apoio">Clique numa situação para filtrar. Passe o mouse para ver o que ela significa.</p>',
-            unsafe_allow_html=True,
-        )
+        st.markdown('<p class="mdf-ra-h2">Produto a produto</p>', unsafe_allow_html=True)
     with c_limpar:
         if grupo or situacao:
             def _limpar_filtros() -> None:

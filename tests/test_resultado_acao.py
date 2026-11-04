@@ -13,7 +13,7 @@ import modules.resultado_acao as ra
 FIM = date(2026, 10, 31)
 
 
-def montar(produtos, resto_estoque=(), resto_retrato=()):
+def montar(produtos):
     """Cada produto: dict com ean e, opcionais, est, vend3m, rs_estoque, un,
     rs, fim, compra."""
     mapa = pd.DataFrame([
@@ -26,12 +26,11 @@ def montar(produtos, resto_estoque=(), resto_retrato=()):
         [
             {"ean": p["ean"], "estoque": p.get("est", 0), "estoque_venda_rs": p.get("rs_estoque", 0), "unidades_vendidas_3m": p.get("vend3m", 0)}
             for p in com_ean if p.get("no_estoque", True)
-        ] + list(resto_estoque),
+        ],
         columns=["ean", "estoque", "estoque_venda_rs", "unidades_vendidas_3m"],
     )
     retrato = pd.DataFrame(
-        [{"ean": p["ean"], "quantidade_vendida": p["un"], "valor_vendido": p.get("rs", 0)} for p in com_ean if p.get("un")]
-        + list(resto_retrato),
+        [{"ean": p["ean"], "quantidade_vendida": p["un"], "valor_vendido": p.get("rs", 0)} for p in com_ean if p.get("un")],
         columns=["ean", "quantidade_vendida", "valor_vendido"],
     )
     atualizado = pd.DataFrame(
@@ -99,29 +98,33 @@ def test_porcentagem_so_com_duas_unidades_ou_mais_antes():
     assert pd.isna(linha({"est": 5, "vend3m": 3, "un": 3, "fim": 1})["variacao_pct"])
 
 
-def test_ganho_acima_da_loja_compara_unidades():
-    resultado = montar(
-        [{"ean": "1", "est": 10, "rs_estoque": 100, "vend3m": 300, "un": 90, "rs": 900, "fim": 1}],  # 100 → 90 un., −10%
-        resto_estoque=[{"ean": "9", "estoque": 1, "estoque_venda_rs": 1, "unidades_vendidas_3m": 150}],  # 50 un.
-        resto_retrato=[{"ean": "9", "quantidade_vendida": 55, "valor_vendido": 1}],  # 55 un., +10%
-    )
-    assert resultado.gondola.crescimento == pytest.approx(-0.10)
-    assert resultado.resto_loja.crescimento == pytest.approx(0.10)
-    assert resultado.ganho_acima_da_loja == pytest.approx(1000 * -0.20)  # R$ antes = 100 un. × R$ 10
+def test_ganho_compara_a_gondola_com_ela_mesma():
+    resultado = montar([{"ean": "1", "est": 10, "rs_estoque": 100, "vend3m": 300, "un": 90, "rs": 1100, "fim": 1}])
+    assert resultado.gondola.faturamento_antes == pytest.approx(1000)  # 100 un. × R$ 10
+    assert resultado.ganho_faturamento == pytest.approx(100)
+    assert resultado.gondola.crescimento_faturamento == pytest.approx(0.10)
+    assert resultado.gondola.crescimento_unidades == pytest.approx(-0.10)
 
 
 def test_sem_base_nao_inventa_numero():
-    assert montar([{"ean": "1", "est": 0, "un": 2, "rs": 10, "fim": 1}]).ganho_acima_da_loja is None
-    assert montar([{"ean": "1", "est": 1, "rs_estoque": 5, "vend3m": 3, "un": 1, "fim": 1}]).ganho_acima_da_loja is None
+    assert montar([{"ean": "1", "est": 0, "un": 2, "rs": 10, "fim": 1}]).ganho_faturamento is None
 
 
-def test_produto_fora_do_mapa_nao_entra_na_lista():
-    resultado = montar(
-        [{"ean": "1", "est": 1, "fim": 1}],
-        resto_retrato=[{"ean": "9", "quantidade_vendida": 5, "valor_vendido": 50}],
+def test_venda_de_produto_fora_do_mapa_nao_entra_em_nada():
+    mapa = pd.DataFrame([{"chave_produto": "1", "produto": "P1", "ean": "1"}])
+    estoque = pd.DataFrame(
+        [{"ean": "1", "estoque": 1, "estoque_venda_rs": 10, "unidades_vendidas_3m": 3},
+         {"ean": "9", "estoque": 1, "estoque_venda_rs": 10, "unidades_vendidas_3m": 300}]
     )
+    retrato = pd.DataFrame(
+        [{"ean": "1", "quantidade_vendida": 2, "valor_vendido": 20},
+         {"ean": "9", "quantidade_vendida": 50, "valor_vendido": 500}]
+    )
+    atualizado = pd.DataFrame([{"ean": "1", "estoque": 1, "ultima_compra": pd.NaT}])
+    resultado = ra.montar_resultado_acao(mapa, estoque, retrato, atualizado, FIM)
     assert list(resultado.tabela["ean"]) == ["1"]
-    assert resultado.resto_loja.unidades_depois == 5
+    assert resultado.gondola.unidades_depois == 2
+    assert resultado.gondola.faturamento_depois == 20
 
 
 def test_mesmo_ean_em_duas_posicoes_conta_uma_vez():

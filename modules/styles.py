@@ -538,8 +538,10 @@ def aplicar_estilo() -> None:
         .mdf-ra-navy {{ color: {config.COR_NAVY}; }}
         .mdf-ra-barras {{ display: flex; flex-direction: column; gap: 16px; }}
         .mdf-ra-barra-topo {{ display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; font-weight: 600; }}
-        .mdf-ra-barra {{ height: 8px; background: {config.COR_CINZA_BG}; border-radius: 999px; overflow: hidden; }}
-        .mdf-ra-barra span {{ display: block; height: 100%; border-radius: 999px; }}
+        .mdf-ra-barra {{ position: relative; height: 8px; background: {config.COR_CINZA_BG}; border-radius: 999px; }}
+        .mdf-ra-barra span {{ position: absolute; top: 0; height: 100%; border-radius: 999px; }}
+        .mdf-ra-barra i {{ position: absolute; top: -2px; width: 1px; height: 12px; background: #9AA5B4; }}
+        .mdf-ra-eixo {{ display: flex; justify-content: space-between; font-size: 12px; color: #6B7280; }}
         .mdf-ra-tabela-caixa {{ overflow-x: auto; background: #FFFFFF; border-radius: 12px; padding: 8px; margin: 8px 0; }}
         .mdf-ra-tabela {{ width: 100%; min-width: 760px; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }}
         .mdf-ra-tabela th {{

@@ -4,6 +4,7 @@ componente clicável dos filtros. As regras ficam em modules/resultado_acao.py.
 from __future__ import annotations
 
 from html import escape
+from math import ceil
 
 import pandas as pd
 import streamlit as st
@@ -14,7 +15,7 @@ import modules.resultado_acao as ra
 MENOS = "−"
 
 GRUPOS = {
-    ra.GRUPO_NA_LOJA: {"rotulo": "Já na loja", "classe": "mdf-chip-azul"},
+    ra.GRUPO_NA_LOJA: {"rotulo": "Em estoque", "classe": "mdf-chip-azul"},
     ra.GRUPO_NOVO: {"rotulo": "Novo", "classe": "mdf-chip-roxo"},
     ra.GRUPO_NAO_ENTROU: {"rotulo": "Não entrou", "classe": "mdf-chip-neutro"},
     ra.GRUPO_SEM_DADO: {"rotulo": "Sem dado", "classe": "mdf-chip-neutro"},
@@ -74,8 +75,8 @@ SITUACOES = {
 EXPLICACAO = f"""
 - **Antes:** vendas dos 3 meses do Estoque do mês do planograma, divididas por 3.
 - **Depois:** vendas exatas do Retrato de Vendas, no período lido do próprio arquivo.
-- **Preço:** o do Estoque. Se o produto estava sem estoque no dia do planograma, o do Retrato.
-- **Ganho acima da loja:** crescimento em unidades da gôndola menos o do resto da loja, multiplicado pelo faturamento da gôndola antes. Usa unidades porque não depende de preço.
+- **Preço do Antes:** o do Estoque. Se o produto estava sem estoque no dia do planograma, o do Retrato. Sem preço em nenhum dos dois, ele conta R$ 0 no Antes.
+- **Faturamento da gôndola:** faturamento depois menos faturamento antes, só com produtos do Mapa. Compara a gôndola com ela mesma, sem descontar o movimento do resto da loja.
 - **Cresceu ou Caiu:** diferença de pelo menos {config.RESULTADO_VARIACAO_MIN_UNIDADES} unidade e {config.RESULTADO_VARIACAO_MIN_PCT}%. Abaixo disso, o produto fica como Estável.
 - **Zerou o estoque:** terminou o mês sem estoque, mas vendeu no mês ou foi comprado nos últimos {config.RESULTADO_DIAS_COMPRA_RECENTE} dias.
 - **Saiu do mix:** sem estoque, sem venda no mês e sem compra nos últimos {config.RESULTADO_DIAS_COMPRA_RECENTE} dias. Produto sem data de compra entra aqui.
@@ -127,56 +128,82 @@ def periodo_html(rotulo_antes: str, rotulo_depois: str) -> str:
     )
 
 
-def _frase_comparacao(gondola: float, resto: float) -> str:
+def _frase_comparacao(faturamento: float, unidades: float) -> str:
     def trecho(fracao: float) -> str:
         return f"{_numero(abs(fracao) * 100, 1)}% {'mais' if fracao >= 0 else 'menos'}"
 
-    ligacao = "e o resto da loja vendeu" if (gondola >= 0) == (resto >= 0) else "enquanto o resto da loja vendeu"
-    return f"A gôndola vendeu {trecho(gondola)} unidades, {ligacao} {trecho(resto)}."
+    if (faturamento >= 0) == (unidades >= 0):
+        return f"A gôndola faturou {trecho(faturamento)} e vendeu {trecho(unidades)} unidades."
+    return f"A gôndola faturou {trecho(faturamento)}, com {trecho(unidades)} unidades."
 
 
-def _barra(rotulo: str, fracao: float, maior: float, cor: str, classe_texto: str) -> str:
-    largura = abs(fracao) / maior * 80 if maior > 0 else 0
+def _escala_barras(*crescimentos: float) -> tuple[int, int]:
+    """(mínimo, máximo) do eixo das barras, em %: de −50 a +50, abrindo de 10
+    em 10 se algum valor passar disso. Sem valor negativo, começa em 0."""
+    maior = max(abs(c) * 100 for c in crescimentos)
+    limite = max(50, ceil(maior / 10) * 10)
+    return (0 if min(crescimentos) >= 0 else -limite), limite
+
+
+def _barra(rotulo: str, fracao: float, escala: tuple[int, int], cor: str, classe_texto: str) -> str:
+    minimo, maximo = escala
+    amplitude = maximo - minimo
+    zero = -minimo / amplitude * 100
+    largura = abs(fracao) * 100 / amplitude * 100
+    inicio = zero if fracao >= 0 else zero - largura
     return (
         '<div>'
         f'<div class="mdf-ra-barra-topo {classe_texto}"><span>{rotulo}</span><span>{_pct_com_sinal(fracao)}</span></div>'
-        f'<div class="mdf-ra-barra"><span style="width: {largura:.0f}%; background: {cor};"></span></div>'
-        '</div>'
+        '<div class="mdf-ra-barra">'
+        f'<span style="left: {inicio:.1f}%; width: {largura:.1f}%; background: {cor};"></span>'
+        f'<i style="left: {zero:.1f}%;"></i>'
+        '</div></div>'
     )
+
+
+def _eixo_barras(escala: tuple[int, int]) -> str:
+    minimo, maximo = escala
+    marcas = [f"{MENOS}{-minimo}%", "0", f"+{maximo}%"] if minimo < 0 else ["0", f"+{maximo}%"]
+    return f'<div class="mdf-ra-eixo">{"".join(f"<span>{m}</span>" for m in marcas)}</div>'
+
+
+def _cor_da_barra(fracao: float) -> tuple[str, str]:
+    if fracao < 0:
+        return config.COR_VERMELHO_TEXTO, "mdf-ra-negativo"
+    return config.COR_NAVY, "mdf-ra-navy"
 
 
 def cartao_principal_html(resultado: ra.ResultadoAcao) -> str:
-    gondola, resto = resultado.gondola, resultado.resto_loja
-    ganho = resultado.ganho_acima_da_loja
+    gondola = resultado.gondola
+    ganho = resultado.ganho_faturamento
     rotulo = (
-        '<p class="mdf-ra-rotulo">Ganho acima da loja '
-        f'{_dica("Quanto a gôndola vendeu a mais ou a menos que o resto da loja no mesmo mês, convertido em reais.")}</p>'
+        '<p class="mdf-ra-rotulo">Faturamento da gôndola '
+        f'{_dica("Quanto a gôndola faturou a mais ou a menos no mês depois do planograma, comparado com a média mensal antes.")}</p>'
     )
-    linha_unidades = (
-        f'<p class="mdf-ra-apoio"><b>{_unidades(gondola.unidades_antes)} → {_unidades(gondola.unidades_depois)} unidades por mês</b>'
-        f' · {_rs(gondola.faturamento_antes)} → {_rs(gondola.faturamento_depois)} na gôndola</p>'
+    linha_apoio = (
+        f'<p class="mdf-ra-apoio"><b>{_rs(gondola.faturamento_antes)} → {_rs(gondola.faturamento_depois)} por mês</b>'
+        f' · {_numero(gondola.unidades_antes)} → {_numero(gondola.unidades_depois)} unidades</p>'
     )
     if ganho is None:
         return (
             '<div class="mdf-ra-cartao"><div class="mdf-ra-principal">'
             f'{rotulo}<p class="mdf-ra-valor mdf-ra-sem-base">Sem base para comparar</p>'
-            '<p class="mdf-ra-frase">Não há venda suficiente antes do planograma, na gôndola ou no resto da loja, para fazer a conta.</p>'
-            f'{linha_unidades}</div></div>'
+            '<p class="mdf-ra-frase">Não há venda suficiente antes do planograma para fazer a conta.</p>'
+            f'{linha_apoio}</div></div>'
         )
     classe_valor = "mdf-ra-negativo" if round(ganho) < 0 else "mdf-ra-positivo"
     sinal = "+" if round(ganho) > 0 else ""
-    cresc_gondola, cresc_resto = gondola.crescimento, resto.crescimento
-    maior = max(abs(cresc_gondola), abs(cresc_resto))
-    cor_gondola = config.COR_VERMELHO_TEXTO if cresc_gondola < 0 else config.COR_NAVY
-    classe_gondola = "mdf-ra-negativo" if cresc_gondola < 0 else "mdf-ra-navy"
+    faturamento, unidades = gondola.crescimento_faturamento, gondola.crescimento_unidades
+    escala = _escala_barras(faturamento, unidades)
     return (
         '<div class="mdf-ra-cartao"><div class="mdf-ra-principal">'
         f'{rotulo}<p class="mdf-ra-valor {classe_valor}">{sinal}{_rs(ganho)} <small>/mês</small></p>'
-        f'<p class="mdf-ra-frase">{_frase_comparacao(cresc_gondola, cresc_resto)}</p>'
-        f'{linha_unidades}</div>'
+        f'<p class="mdf-ra-frase">{_frase_comparacao(faturamento, unidades)}</p>'
+        f'{linha_apoio}</div>'
         '<div class="mdf-ra-barras">'
-        f'{_barra("Gôndola", cresc_gondola, maior, cor_gondola, classe_gondola)}'
-        f'{_barra("Resto da loja", cresc_resto, maior, "#9AA5B4", "mdf-ra-suave")}'
+        f'{_barra("Faturamento", faturamento, escala, *_cor_da_barra(faturamento))}'
+        f'{_barra("Unidades", unidades, escala, *_cor_da_barra(unidades))}'
+        f'{_eixo_barras(escala)}'
         '</div></div>'
     )
 
@@ -191,38 +218,44 @@ def itens_cards(resultado: ra.ResultadoAcao) -> list[dict]:
         return f"{n} produto" if n == 1 else f"{n} produtos"
 
     na_loja = resultado.comparativo_do_grupo(ra.GRUPO_NA_LOJA)
-    if na_loja.crescimento is None:
+    if na_loja.crescimento_unidades is None:
         valor_na_loja, classe_na_loja = "—", "suave"
     else:
-        valor_na_loja = _pct_com_sinal(na_loja.crescimento)
-        classe_na_loja = "negativo" if na_loja.crescimento < 0 else "positivo"
-    novos = resultado.comparativo_do_grupo(ra.GRUPO_NOVO)
+        valor_na_loja = _pct_com_sinal(na_loja.crescimento_unidades)
+        classe_na_loja = "negativo" if na_loja.crescimento_unidades < 0 else "positivo"
     n_novos = len(resultado.do_grupo(ra.GRUPO_NOVO))
     n_na_loja = len(resultado.do_grupo(ra.GRUPO_NA_LOJA))
     n_nao_entrou = len(resultado.do_grupo(ra.GRUPO_NAO_ENTROU))
+    n_novos_sem_venda = int(situacoes.get(ra.SITUACAO_NOVO_SEM_VENDA, 0))
+    if not n_novos:
+        apoio_novos = "A loja não comprou nenhum produto novo do Mapa"
+    elif n_novos_sem_venda:
+        apoio_novos = f"{n_novos_sem_venda} ainda sem venda"
+    else:
+        apoio_novos = "Todos já venderam"
 
     return [
         {
-            "id": ra.GRUPO_NA_LOJA, "titulo": "Já na loja", "qtd": plural(n_na_loja), "chip": "chip-azul",
+            "id": ra.GRUPO_NA_LOJA, "titulo": "Produtos em Estoque", "qtd": plural(n_na_loja), "selo": "selo-azul",
             "dica": "A loja já tinha ou já vendia antes do planograma.",
             "valor": valor_na_loja, "valorClasse": classe_na_loja,
             "apoio": (
-                f"{_unidades(na_loja.unidades_antes)} → {_unidades(na_loja.unidades_depois)} unidades por mês · "
+                f"{_numero(na_loja.unidades_antes)} → {_numero(na_loja.unidades_depois)} unidades por mês · "
                 f"{situacoes.get(ra.SITUACAO_CRESCEU, 0)} cresceram, {situacoes.get(ra.SITUACAO_CAIU, 0)} caíram"
             ),
         },
         {
-            "id": ra.GRUPO_NOVO, "titulo": "Produtos novos", "qtd": plural(n_novos), "chip": "chip-roxo",
+            "id": ra.GRUPO_NOVO, "titulo": "Produtos novos", "qtd": plural(n_novos), "selo": "selo-roxo",
             "dica": "A loja não tinha e comprou depois do planograma.",
             "valor": f"{situacoes.get(ra.SITUACAO_NOVO_COM_VENDA, 0)} de {n_novos} venderam" if n_novos else "Nenhum",
             "valorClasse": "navy",
-            "apoio": f"{_unidades(novos.unidades_depois)} unidades · {_rs(novos.faturamento_depois)} vendidos no mês",
+            "apoio": apoio_novos,
         },
         {
-            "id": ra.GRUPO_NAO_ENTROU, "titulo": "Não entraram", "qtd": plural(n_nao_entrou), "chip": "chip-neutro",
-            "dica": "Estão no Mapa, mas a loja não tem. Não entram na conta do ganho.",
+            "id": ra.GRUPO_NAO_ENTROU, "titulo": "Não entraram", "qtd": plural(n_nao_entrou), "selo": "selo-neutro",
+            "dica": "Estão no Mapa, mas a loja não tem.",
             "valor": plural(n_nao_entrou), "valorClasse": "suave",
-            "apoio": "Oportunidade para a próxima conversa com o lojista",
+            "apoio": "Oportunidade para melhorar o mix",
         },
     ]
 
@@ -231,14 +264,11 @@ def itens_chips(tabela: pd.DataFrame, ativo: str | None) -> list[dict]:
     """Filtros de situação, com os totais de `tabela` (a lista já filtrada por
     grupo). Situação sem nenhum produto não aparece, salvo a que está ativa."""
     contagem = tabela["situacao"].value_counts()
-    itens = [{"id": "todos", "rotulo": "Todos", "total": len(tabela), "chip": "chip-todos", "dica": ""}]
+    itens = [{"id": "todos", "rotulo": "Todos", "total": len(tabela), "dica": ""}]
     for situacao, info in SITUACOES.items():
         total = int(contagem.get(situacao, 0))
         if total or situacao == ativo:
-            itens.append({
-                "id": situacao, "rotulo": info["rotulo"], "total": total,
-                "chip": info["classe"].removeprefix("mdf-"), "dica": info["dica"],
-            })
+            itens.append({"id": situacao, "rotulo": info["rotulo"], "total": total, "dica": info["dica"]})
     return itens
 
 
@@ -250,16 +280,16 @@ def _texto_antes(row) -> str:
     if row["grupo"] != ra.GRUPO_NA_LOJA:
         return "—"
     if row["faturamento_antes"] <= 0:  # sem preço em nenhum dos arquivos
-        return f'{_unidades(row["unidades_antes"])} un.'
-    return f'{_unidades(row["unidades_antes"])} un. · {_rs(row["faturamento_antes"])}'
+        return f'{_unidades(row["unidades_antes"])} un'
+    return f'{_unidades(row["unidades_antes"])} un · {_rs(row["faturamento_antes"])}'
 
 
 def _texto_depois(row) -> str:
     if row["grupo"] in (ra.GRUPO_NAO_ENTROU, ra.GRUPO_SEM_DADO):
         return "—"
     if row["unidades_depois"] <= 0:
-        return "0 un."
-    return f'{_unidades(row["unidades_depois"])} un. · {_rs(row["faturamento_depois"])}'
+        return "0 un"
+    return f'{_unidades(row["unidades_depois"])} un · {_rs(row["faturamento_depois"])}'
 
 
 def _variacao(row) -> tuple[str, str]:
@@ -269,9 +299,9 @@ def _variacao(row) -> tuple[str, str]:
         return "—", "mdf-ra-suave"
     diferenca = row["variacao_unidades"]
     if abs(diferenca) < 0.05:
-        return "0 un.", "mdf-ra-suave"
+        return "0 un", "mdf-ra-suave"
     sinal = "+" if diferenca > 0 else MENOS
-    texto = f"{sinal}{_unidades(abs(diferenca))} un."
+    texto = f"{sinal}{_unidades(abs(diferenca))} un"
     if pd.notna(row["variacao_pct"]):
         texto += f' · {sinal}{_numero(abs(row["variacao_pct"]))}%'
     if row["situacao"] in (ra.SITUACAO_CRESCEU, ra.SITUACAO_NOVO_COM_VENDA):
@@ -335,7 +365,7 @@ def csv_da_lista(tabela: pd.DataFrame) -> bytes:
 _CSS_FILTRO = f"""
 .mdf-raiz {{ font-family: inherit; font-size: 14px; line-height: 1.5; color: #1F2937; }}
 .mdf-raiz.cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }}
-.mdf-raiz.chips {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+.mdf-raiz.chips {{ display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; background: #F3F4F6; border-radius: 12px; }}
 button {{ font: inherit; color: inherit; cursor: pointer; }}
 button:focus-visible {{ outline: 2px solid {config.COR_AZUL_TEXTO}; outline-offset: 2px; }}
 .card {{
@@ -358,18 +388,18 @@ button:focus-visible {{ outline: 2px solid {config.COR_AZUL_TEXTO}; outline-offs
 .valor-negativo {{ color: {config.COR_VERMELHO_TEXTO}; }}
 .card-filtrando {{ margin-top: auto; padding-top: 12px; border-top: 1px solid #E5E7EB; font-size: 12px; font-weight: 600; color: {config.COR_NAVY}; }}
 .selo {{ display: inline-flex; font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 999px; white-space: nowrap; }}
-.chip {{ display: inline-flex; align-items: center; min-height: 40px; padding: 0 16px; font-size: 14px; font-weight: 600; border: 0; border-radius: 999px; }}
-.chip:hover {{ filter: brightness(.96); }}
-.chip.ativo {{ box-shadow: 0 0 0 2px {config.COR_NAVY}; font-weight: 700; }}
-.chip-todos {{ color: {config.COR_NAVY}; background: {config.COR_CINZA_BG}; }}
-.chip-todos.ativo {{ color: #FFFFFF; background: {config.COR_NAVY}; box-shadow: none; }}
-.chip-positivo {{ color: {config.COR_VERDE_TEXTO}; background: {config.COR_VERDE_BG}; }}
-.chip-negativo {{ color: {config.COR_VERMELHO_TEXTO}; background: {config.COR_VERMELHO_BG}; }}
-.chip-neutro {{ color: {config.COR_CINZA_TEXTO}; background: {config.COR_CINZA_BG}; }}
-.chip-alerta {{ color: {config.COR_AMBAR_TEXTO}; background: {config.COR_AMBAR_BG}; }}
-.chip-azul {{ color: {config.COR_AZUL_TEXTO}; background: {config.COR_AZUL_BG}; }}
-.chip-roxo {{ color: {config.COR_ROXO_TEXTO}; background: {config.COR_ROXO_BG}; }}
-.chip-laranja {{ color: {config.COR_LARANJA_TEXTO}; background: {config.COR_LARANJA_BG}; }}
+.chip {{
+    display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px;
+    font-size: 14px; font-weight: 600; color: #4B5563; background: transparent; border: 0; border-radius: 8px;
+    transition: background .15s ease, color .15s ease;
+}}
+.chip:hover {{ color: {config.COR_NAVY}; background: rgba(255,255,255,.6); }}
+.chip.ativo {{ color: {config.COR_NAVY}; background: #FFFFFF; box-shadow: 0 1px 2px rgba(23,55,94,.12), 0 1px 4px rgba(23,55,94,.08); }}
+.chip-total {{ font-size: 12px; color: #6B7280; }}
+.chip.ativo .chip-total {{ color: {config.COR_NAVY}; }}
+.selo-azul {{ color: {config.COR_AZUL_TEXTO}; background: {config.COR_AZUL_BG}; }}
+.selo-roxo {{ color: {config.COR_ROXO_TEXTO}; background: {config.COR_ROXO_BG}; }}
+.selo-neutro {{ color: {config.COR_CINZA_TEXTO}; background: {config.COR_CINZA_BG}; }}
 .com-dica {{ position: relative; display: inline-flex; }}
 .caixa-dica {{
     position: absolute; z-index: 10; top: calc(100% + 8px); left: 50%; transform: translateX(-50%);
@@ -394,7 +424,7 @@ function card(item, ativo, escolher) {
     if (item.id === ativo) botao.classList.add("ativo");
     else if (ativo) botao.classList.add("apagado");
     const topo = elemento("span", "card-topo");
-    topo.append(elemento("span", "card-titulo", item.titulo), elemento("span", "selo " + item.chip, item.qtd));
+    topo.append(elemento("span", "card-titulo", item.titulo), elemento("span", "selo " + item.selo, item.qtd));
     botao.append(
         topo,
         elemento("span", "card-texto", item.dica),
@@ -410,7 +440,8 @@ function card(item, ativo, escolher) {
 
 function chip(item, ativo, escolher) {
     const ehAtivo = item.id === ativo || (item.id === "todos" && !ativo);
-    const botao = elemento("button", "chip " + item.chip + (ehAtivo ? " ativo" : ""), item.rotulo + " · " + item.total);
+    const botao = elemento("button", "chip" + (ehAtivo ? " ativo" : ""));
+    botao.append(elemento("span", "", item.rotulo), elemento("span", "chip-total", String(item.total)));
     botao.type = "button";
     botao.setAttribute("aria-pressed", String(ehAtivo));
     botao.onclick = () => escolher(item.id);

@@ -5,12 +5,11 @@ olhando o que aconteceu na loja. O ajuste de mix não entra na conta: a
 maioria dos consultores não pede a compra ao lojista, então um produto novo
 é o que o lojista comprou por conta própria.
 
-  Antes:  unidades vendidas do Estoque do mês do planograma (3 meses) ÷ 3
-  Depois: unidades vendidas do Retrato de Vendas do mês seguinte
+  Antes:  média mensal do Estoque do mês do planograma (3 meses ÷ 3)
+  Depois: vendas do Retrato de Vendas do mês seguinte
 
-O número principal compara UNIDADES, e não R$: na validação com dados reais
-(loja 604), o cálculo em R$ variou de −R$ 453 a −R$ 1.243 conforme o método,
-porque parte das vendas não tem preço no Estoque ou par entre os arquivos.
+O número principal compara a gôndola com ela mesma: faturamento depois menos
+faturamento antes. Não desconta o movimento do resto da loja.
 """
 from __future__ import annotations
 
@@ -39,35 +38,39 @@ SITUACAO_SEM_DADO = "sem_dado"
 
 @dataclass(frozen=True)
 class Comparativo:
-    """Unidades (e R$, quando existem) de um conjunto de produtos, por mês."""
+    """Unidades e R$ de um conjunto de produtos, por mês."""
     unidades_antes: float
     unidades_depois: float
     faturamento_antes: float = 0.0
     faturamento_depois: float = 0.0
 
     @property
-    def crescimento(self) -> float | None:
+    def crescimento_unidades(self) -> float | None:
         """Crescimento em unidades (0,05 = +5%). None sem base "antes"."""
         if self.unidades_antes <= 0:
             return None
         return self.unidades_depois / self.unidades_antes - 1
+
+    @property
+    def crescimento_faturamento(self) -> float | None:
+        """Crescimento em R$ (0,05 = +5%). None sem base "antes"."""
+        if self.faturamento_antes <= 0:
+            return None
+        return self.faturamento_depois / self.faturamento_antes - 1
 
 
 @dataclass(frozen=True)
 class ResultadoAcao:
     tabela: pd.DataFrame
     gondola: Comparativo
-    resto_loja: Comparativo
 
     @property
-    def ganho_acima_da_loja(self) -> float | None:
+    def ganho_faturamento(self) -> float | None:
         """R$/mês. None quando falta base para comparar — a tela avisa, em
         vez de mostrar um número estimado."""
-        crescimento_gondola = self.gondola.crescimento
-        crescimento_resto = self.resto_loja.crescimento
-        if crescimento_gondola is None or crescimento_resto is None or self.gondola.faturamento_antes <= 0:
+        if self.gondola.crescimento_faturamento is None:
             return None
-        return self.gondola.faturamento_antes * (crescimento_gondola - crescimento_resto)
+        return self.gondola.faturamento_depois - self.gondola.faturamento_antes
 
     def do_grupo(self, grupo: str) -> pd.DataFrame:
         return self.tabela[self.tabela["grupo"] == grupo]
@@ -185,10 +188,6 @@ def montar_resultado_acao(
         .reset_index(drop=True)
     )
 
-    eans_gondola = set(tabela["ean"].dropna())
-    estoque_resto = estoque_df[~estoque_df["ean"].isin(eans_gondola)]
-    retrato_resto = retrato_df[~retrato_df["ean"].isin(eans_gondola)]
-
     return ResultadoAcao(
         tabela=tabela,
         gondola=Comparativo(
@@ -196,9 +195,5 @@ def montar_resultado_acao(
             float(tabela["unidades_depois"].sum()),
             float(tabela["faturamento_antes"].sum()),
             float(tabela["faturamento_depois"].sum()),
-        ),
-        resto_loja=Comparativo(
-            float(estoque_resto["unidades_vendidas_3m"].sum()) / 3,
-            float(retrato_resto["quantidade_vendida"].sum()),
         ),
     )
