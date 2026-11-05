@@ -1043,6 +1043,24 @@ def carregar_ajuste_mix_salvo(storage, caminho_ciclo: str) -> dict | None:
     return json.loads(conteudo)
 
 
+def quantidades_iniciais_ajuste(tabela_base: pd.DataFrame, ajuste_salvo: dict | None) -> dict:
+    """Quantidade de cada produto ao abrir o Ajuste de mix numa sessão nova:
+    {chave_produto: quantidade}. Sem ajuste salvo, é o cálculo automático.
+
+    Com ajuste salvo, vale o que o consultor salvou. O arquivo só guarda
+    quantidades acima de 0, então produto ausente nele foi zerado — exceto
+    estoque negativo na planilha, que continua aparecendo para ser corrigido.
+    """
+    if ajuste_salvo is None:
+        return dict(zip(tabela_base["chave_produto"], tabela_base["quantidade"]))
+
+    salvas = {str(p["ean_original"]): p["quantidade"] for p in ajuste_salvo.get("produtos", [])}
+    return {
+        chave: salvas.get(str(chave), quantidade if quantidade < 0 else 0)
+        for chave, quantidade in zip(tabela_base["chave_produto"], tabela_base["quantidade"])
+    }
+
+
 def montar_tabela_sugestao_gc(mapa_df: pd.DataFrame, ajuste_salvo: dict | None) -> pd.DataFrame:
     """Cruza os produtos salvos no ajuste de mix (quantidade > 0) com o
     Mapa da Farmácia, para obter posição e frentes de cada um.

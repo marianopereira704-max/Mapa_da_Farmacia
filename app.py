@@ -1616,12 +1616,22 @@ def pagina_ajuste_mix() -> None:
         chave_estado = f"ajuste_mix::{loja}::{ciclo_selecionado}"
 
         if chave_estado not in st.session_state:
-            # Inicializa o estado editável a partir do cálculo automático (1a vez
-            # que esta loja/ciclo é aberta nesta sessão).
-            st.session_state[chave_estado] = {
-                row["chave_produto"]: row["quantidade"]
-                for _, row in tabela_base.iterrows()
-            }
+            # Inicializa o estado editável (1a vez que esta loja/ciclo é aberta
+            # nesta sessão) a partir do ajuste salvo ou, sem ele, do cálculo
+            # automático. Se a leitura falhar, a tela para aqui: abrir com o
+            # cálculo automático deixaria um "Salvar" apagar o ajuste existente.
+            try:
+                ajuste_salvo = dl.carregar_ajuste_mix_salvo(storage, ciclo_selecionado)
+            except StorageError as e:
+                st.error(f"Não foi possível ler o ajuste de mix salvo desta loja. Tente de novo em instantes. ({e})")
+                return
+            except ValueError:
+                ajuste_salvo = None
+                st.warning(
+                    "O ajuste de mix salvo desta loja está corrompido e não pôde ser lido. "
+                    "A tela mostra a sugestão automática; ao salvar, ele será substituído."
+                )
+            st.session_state[chave_estado] = dl.quantidades_iniciais_ajuste(tabela_base, ajuste_salvo)
 
         quantidades_editadas = st.session_state[chave_estado]
 

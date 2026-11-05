@@ -1,6 +1,6 @@
 # Resultado da ação — plano de execução
 
-Data: 04/11/2026 (revisado no mesmo dia, depois da validação na loja 604)
+Data: 04/11/2026 (revisado no mesmo dia, depois da validação com dados reais)
 Mockup: https://claude.ai/artifact/PsAoukfnYJXG11MjcRUUNH
 Telas afetadas: aba **Conferência** → seção "Resultado da ação"
 
@@ -35,13 +35,13 @@ Notação: `est_ini` = estoque no Estoque do mês do planograma; `antes` = unida
 
 ### 2.1 Grupos
 
-| Grupo | Regra | Loja 604 |
-|---|---|---|
-| Produtos em Estoque | `est_ini > 0` **ou** `antes > 0` | 49 |
-| Produtos novos | `est_ini == 0` e `antes == 0`, e depois `depois > 0` **ou** `est_fim > 0` | 5 |
-| Não entraram | `est_ini == 0` e `antes == 0`, e continuou `depois == 0` e `est_fim == 0` | 59 |
+| Grupo | Regra |
+|---|---|
+| Produtos em Estoque | `est_ini > 0` **ou** `antes > 0` |
+| Produtos novos | `est_ini == 0` e `antes == 0`, e depois `depois > 0` **ou** `est_fim > 0` |
+| Não entraram | `est_ini == 0` e `antes == 0`, e continuou `depois == 0` e `est_fim == 0` |
 
-Um produto com estoque 0 que já vendia nos 3 meses (ruptura) é **Produtos em Estoque**, não é novo. Produto com EAN inválido não entra em nenhum grupo nem em nenhuma conta: aparece na lista como **Sem dado** (1 na loja 604).
+Um produto com estoque 0 que já vendia nos 3 meses (ruptura) é **Produtos em Estoque**, não é novo. Produto com EAN inválido não entra em nenhum grupo nem em nenhuma conta: aparece na lista como **Sem dado**.
 
 ### 2.2 Situação de cada produto (primeira regra que bater)
 
@@ -63,11 +63,11 @@ Decisão de 04/11/2026: a gôndola é comparada com ela mesma. A comparação co
 
 - **Gôndola** = todos os produtos do Mapa.
 - **Faturamento da gôndola (R$/mês)** = `R$ depois − R$ antes`.
-- A linha de apoio mostra R$ e unidades: "R$ 2.962 → R$ 3.259 por mês · 157 → 152 unidades".
+- A linha de apoio mostra R$ e unidades, no formato "R$ 1.000 → R$ 1.100 por mês · 100 → 90 unidades" (valores ilustrativos).
 - As barras mostram o crescimento de Faturamento e de Unidades num eixo real, de −50% a +50%. O eixo abre de 10 em 10 se algum valor passar disso e, sem valor negativo, começa em 0.
 - **O número pode ser negativo**, e a tela mostra isso em vermelho, sem suavizar.
 - Sem faturamento antes: o cartão mostra "Sem base para comparar", nunca um número estimado.
-- Produto sem preço no Estoque nem no Retrato conta R$ 0 no Antes, o que favorece um pouco o resultado (na 604: 4 produtos, 4 unidades por mês).
+- Produto sem preço no Estoque nem no Retrato conta R$ 0 no Antes, o que favorece um pouco o resultado.
 
 ### 2.4 Cards por grupo
 
@@ -79,15 +79,7 @@ Decisão de 04/11/2026: a gôndola é comparada com ela mesma. A comparação co
 
 ## 3. Validação já feita (T1)
 
-Loja 604, ciclo 2026-09, Retrato de 01/10 a 31/10. A 76 ainda não tem Retrato nem Estoque atualizado; decisão: seguir sem ela.
-
-| Medida | Resultado |
-|---|---|
-| Faturamento da gôndola | R$ 2.962 → R$ 3.259 (+R$ 297, +10,0%) |
-| Unidades da gôndola | 157 → 152 (−3,0%) |
-| Preço médio por unidade | R$ 18,90 → R$ 21,44: menos unidades, de produtos mais caros |
-| Produtos novos | 5, todos com compra em set/out |
-| Produtos do Estoque atualizado com data de compra | 5.900 de 6.265 |
+A conta foi conferida com os arquivos reais de uma loja, em um ciclo com Retrato do mês seguinte completo: os totais da tela bateram com as planilhas originais. Os valores não ficam neste repositório, que é público.
 
 Uma loja e um mês só mostram que a conta funciona. **Não dizem se a gôndola costuma dar resultado.**
 
@@ -127,15 +119,15 @@ Adicionar as 4 constantes da seção 2 em `config.py`, com comentário.
 
 ### T3 — Leitura do Estoque atualizado completo
 `carregar_estoque_atualizado_resultado()` em `data_loader.py`: além de ean/estoque, lê **Última compra**, aceitando as variações de nome de coluna já vistas. Coluna ausente vira vazio, sem erro.
-**Teste:** arquivos reais da 604 e da 1188 e um arquivo sem a coluna.
+**Teste:** arquivos reais de duas lojas e um arquivo sem a coluna.
 
 ### T4 — Módulo de regras `resultado_acao.py`
 Implementar a seção 2 inteira.
-**Teste (`tests/test_resultado_acao.py`, pytest):** um caso por linha das tabelas de grupo e situação, limites exatos (0,9 un.; 4,9%; 60 × 61 dias), produto fora do Mapa não entra, ruptura com venda fica em Produtos em Estoque, "sem base para comparar", e **os totais da 604** (49/5/59).
+**Teste (`tests/test_resultado_acao.py`, pytest):** um caso por linha das tabelas de grupo e situação, limites exatos (0,9 un.; 4,9%; 60 × 61 dias), produto fora do Mapa não entra, ruptura com venda fica em Produtos em Estoque, "sem base para comparar", e os totais de uma loja real, conferidos fora do repositório.
 
 ### T5 — Carregamento no app
 `_carregar_dados_resultado_acao` passa a usar o novo leitor e `pagina_conferencia` deixa de exigir ajuste salvo. Cache continua por assinatura do ciclo.
-**Teste:** abrir a Conferência da 604 localmente.
+**Teste:** abrir a Conferência de uma loja real localmente.
 
 ### T6 — Tela: período, cartão principal e explicação
 Reescrever `_renderizar_resultado_acao`:
@@ -160,7 +152,7 @@ Tokens de cor e espaço do mockup em `styles.py`; remoção do CSS que ficou sem
 Abrir a Conferência com dados falsos: renderiza sem erro, filtros reduzem a lista, ciclo sem Retrato mostra o aviso de arquivo faltando, ciclo sem ajuste salvo mostra o resultado normalmente.
 
 ### T11 — Conferência manual
-Na 604, comparar 10 produtos e o total de cada grupo com uma conta manual em planilha. Você valida antes de publicar.
+Em uma loja real, comparar 10 produtos e o total de cada grupo com uma conta manual em planilha. Você valida antes de publicar.
 
 ### T12 — Publicação
 Só quando você pedir: commit e push na `main` (publica no Streamlit Cloud).
@@ -169,7 +161,7 @@ Só quando você pedir: commit e push na `main` (publica no Streamlit Cloud).
 
 | Risco | Efeito | Mitigação |
 |---|---|---|
-| Só uma loja validada | O número pode se comportar diferente em outras | Conferir a 76 quando o Retrato dela chegar |
+| Só uma loja validada | O número pode se comportar diferente em outras | Conferir outras lojas conforme os Retratos chegarem |
 | Comparação entre meses diferentes | Sem comparar com o resto da loja, um mês bom ou ruim para todos aparece como resultado da gôndola | Decisão consciente; o Antes é média de 3 meses e o Depois é um mês exato |
 | Unidades caem e R$ sobe | Pode gerar pergunta do lojista | Frase, linha de apoio e barras mostram os dois |
 | Componente customizado no Cloud | Cards sem clique | Plano B do T7 |
