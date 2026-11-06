@@ -52,6 +52,13 @@ class Loja:
     supervisora: str | None
     nome_fantasia: str | None = None  # fantasyName puro, sem fallback (ex.: relatório mensal, que quer as duas colunas separadas)
     razao_social: str | None = None  # businessName puro (titular do CNPJ) — idem
+    status: str | None = None  # status_title — só faz diferença com obter_lojas(apenas_ativas=False)
+    data_inativacao: str | None = None  # inactivate_date, como veio da API
+    motivo_inativacao: str | None = None  # inactivation_reason
+
+    @property
+    def ativa(self) -> bool:
+        return self.status == _STATUS_ATIVO
 
 
 # Nomes de campo confirmados contra uma resposta real da API (endpoint
@@ -77,10 +84,12 @@ _SETOR_SUPERVISORA = "Supervisão"
 _STATUS_ATIVO = "Ativo"
 
 
-def obter_lojas(url: str, api_key: str, timeout: int = 15) -> list[Loja]:
+def obter_lojas(url: str, api_key: str, timeout: int = 15, apenas_ativas: bool = True) -> list[Loja]:
     """Busca a lista de lojas ATIVAS na API do TI (item com
     `status_title` diferente de "Ativo" é descartado — ver
-    _STATUS_ATIVO).
+    _STATUS_ATIVO). Com apenas_ativas=False devolve todas, para quem
+    precisa do cadastro de loja já desligada (ex.: relatório mensal, onde
+    ela ainda conta na conferência do mês em que enviou).
 
     Levanta LojasAPIError se `url`/`api_key` não estiverem configurados,
     se a requisição falhar (rede, timeout), se a API responder com
@@ -114,7 +123,7 @@ def obter_lojas(url: str, api_key: str, timeout: int = 15) -> list[Loja]:
     for item in itens:
         if not isinstance(item, dict):
             continue
-        if item.get("status_title") != _STATUS_ATIVO:
+        if apenas_ativas and item.get("status_title") != _STATUS_ATIVO:
             continue  # loja inativa (ou status desconhecido) — não entra na lista
         codigo = _primeiro_valor(item, _CAMPOS_CODIGO)
         if not codigo:
@@ -126,6 +135,9 @@ def obter_lojas(url: str, api_key: str, timeout: int = 15) -> list[Loja]:
             supervisora=_pessoa_do_setor(item, _SETOR_SUPERVISORA),
             nome_fantasia=item.get("fantasyName") or None,
             razao_social=item.get("businessName") or None,
+            status=item.get("status_title") or None,
+            data_inativacao=item.get("inactivate_date") or None,
+            motivo_inativacao=item.get("inactivation_reason") or None,
         ))
     return lojas
 

@@ -16,8 +16,8 @@ existiam):
 | Página | O que faz |
 |---|---|
 | **Upload** | Envio de arquivos direto pelo navegador: planilhas, fotos e planograma por loja, e a base nacional de demanda. É a porta de entrada dos dados — sem ela, não há nada para aparecer em Selecionar Loja/Análise. Se o arquivo já existe no destino, pede confirmação antes de substituir (por arquivo individual — enviar 3 arquivos juntos, com só 1 já existente, avisa só sobre esse). |
-| **Selecionar Loja** | Tela de navegação visual em 2 níveis: lista de lojas (com filtro por consultor) e, ao escolher uma, os cartões de cada ciclo (mês) daquela loja, com um checklist de quais dos 5 arquivos já foram enviados. Substituiu os antigos selectboxes de Consultor/Loja/Ciclo na sidebar — ver [Descoberta do inventário](#descoberta-do-inventário) abaixo. |
-| **Análise** | As 3 sub-abas de sempre (Ajuste de mix / Sugestão de GC / Conferência), abertas a partir de um cartão de ciclo escolhido em Selecionar Loja. Sem nenhuma loja/ciclo escolhido ainda (primeira vez na sessão), mostra uma mensagem com um botão para ir a Selecionar Loja, em vez de ficar em branco. |
+| **Selecionar Loja** | Barra de meses (abre no mês atual), busca por código ou razão social, filtros de consultor e supervisora e lista paginada de lojas, com os botões "Ir para análise" e "Upload". Loja sem arquivos no mês só aparece na busca, e só com "Upload". Ver [Descoberta do inventário](#descoberta-do-inventário) abaixo. |
+| **Análise** | As 3 sub-abas de sempre (Ajuste de mix / Sugestão de GC / Conferência), abertas pela lista de Selecionar Loja. No topo, dá para trocar de loja no mês aberto, trocar de mês e ver os arquivos do mês, com o botão para enviar. Sem nenhuma loja/ciclo escolhido ainda (primeira vez na sessão), mostra uma mensagem com um botão para ir a Selecionar Loja, em vez de ficar em branco. |
 
 Dentro de **Análise**, as 3 sub-abas continuam com exatamente a mesma
 lógica de sempre:
@@ -169,8 +169,8 @@ _Base/
   variações de maiúsculas/minúsculas, acentos e espaços/traços no nome
   (ex.: "Mapa_Farmacia.XLSX", "mapa da farmácia.xlsx" e
   "MAPA-FARMACIA.xlsx" são todos reconhecidos como o mesmo arquivo). O
-  checklist de arquivos presentes em cada cartão de ciclo (Selecionar
-  Loja) usa a mesma tolerância, via `modules/inventario.py`.
+  checklist de arquivos presentes no painel "Arquivos do mês"
+  (Análise) usa a mesma tolerância, via `modules/inventario.py`.
 - **Subpasta de mês no formato `AAAA-MM`** (ex.: `2026-07`), não apenas o
   nome do mês — evita a colisão de "Julho de 2026" com "Julho de 2027"
   que o formato antigo (só o nome do mês) tinha.
@@ -338,8 +338,8 @@ checar estes pontos antes de mexer nas partes envolvidas.
     inicializado na PRIMEIRA vez que a loja/ciclo é aberta naquela sessão
     do navegador (`if chave_estado not in st.session_state: ...`). Nada no
     código reseta essa chave depois — nem a correção de um arquivo via
-    "Sim, substituir" (aba Upload), nem reentrar na Análise pelo cartão de
-    ciclo (só `_gc_modelo_aviso_ciclo_visto` é resetado ali). Resultado: se
+    "Sim, substituir" (aba Upload), nem reentrar na Análise pela lista de
+    lojas (só `_gc_modelo_aviso_ciclo_visto` é resetado ali). Resultado: se
     o consultor corrige um arquivo SEM fechar a aba do navegador, a tela de
     Ajuste de mix continua mostrando (e permitindo salvar de novo) as
     quantidades calculadas a partir do dado ERRADO, mesmo com o

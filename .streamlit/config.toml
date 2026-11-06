@@ -2,3 +2,6 @@
 # escuro do computador do usuário não pode trocar o fundo.
 [theme]
 base = "light"
+# Azul do projeto (config.COR_NAVY). Sem isso, os campos selecionados ficam com
+# a borda vermelha padrão do Streamlit.
+primaryColor = "#17375E"

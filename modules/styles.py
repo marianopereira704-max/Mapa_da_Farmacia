@@ -206,9 +206,7 @@ def aplicar_estilo() -> None:
         }}
 
         /* ---- Botão discreto reaproveitável ----
-        Usado tanto pelos itens INATIVOS do menu lateral quanto pelo botão
-        "← Voltar" (página Selecionar Loja, Nível 2) e "Ir para Upload"
-        (cartão "Enviar novo mês") — fundo neutro claro, texto navy, sem
+        Usado pelos itens INATIVOS do menu lateral — fundo neutro claro, texto navy, sem
         preenchimento forte, pra não competir visualmente com as ações
         primárias (Abrir, Enviar, Salvar). Ao contrário do marcador
         "ativo" acima, este NÃO é escopado à sidebar — é a mesma
@@ -384,37 +382,7 @@ def aplicar_estilo() -> None:
             margin-bottom: 6px;
         }}
 
-        /* ---- Cartões de ciclo (mês) — página "Selecionar Loja", Nível 2 ----
-        Card secundário independente (grid, não lista) — mesmas cores já
-        usadas em outros cards secundários do projeto (fundo #F7F8FA,
-        borda #E4E7EB), com border-radius um pouco maior (12px) por ser
-        um cartão "cheio" (título + checklist + botão), não uma linha fina
-        de lista. */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-ciclo-card-marker) {{
-            border-radius: 12px !important;
-            border: 1px solid #E4E7EB !important;
-            background: #F7F8FA;
-            padding: 14px !important;
-        }}
-        /* Cartão "Enviar novo mês" — mesma família visual, mas com borda
-        tracejada e fundo branco (não é um mês existente, é uma ação). */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-ciclo-novo-marker) {{
-            border-radius: 12px !important;
-            border: 1px dashed #C9CFD8 !important;
-            background: #FFFFFF;
-            padding: 14px !important;
-            display: flex !important;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-        }}
-        .mdf-ciclo-titulo {{
-            font-size: 15px;
-            font-weight: 700;
-            color: {config.COR_NAVY};
-            margin: 0 0 8px 0;
-        }}
+        /* Situação de cada arquivo no painel "Arquivos do mês" (Análise) */
         .mdf-check-ok {{ font-size: 13px; color: {config.COR_VERDE_TEXTO}; margin: 2px 0; }}
         .mdf-check-falta {{ font-size: 13px; color: {config.COR_AMBAR_TEXTO}; margin: 2px 0; }}
 
@@ -431,6 +399,70 @@ def aplicar_estilo() -> None:
             justify-content: center;
             clip-path: polygon(0 0, 100% 0, 100% 70%, 50% 100%, 0 70%);
             margin-top: 6px;
+        }}
+
+        /* ---- Selecionar Loja: barra de meses e lista de lojas ---- */
+        .st-key-mdf_barra_meses {{
+            background: #F0F2F6;
+            border-radius: 12px;
+            padding: 8px;
+        }}
+        .mdf-barra-mes-rotulo {{ font-weight: 700; color: {config.COR_NAVY}; margin: 0; padding: 0 8px; }}
+        .st-key-mdf_barra_meses button[kind="secondary"] {{
+            background: transparent !important;
+            border-color: transparent !important;
+            color: #374151 !important;
+        }}
+        .st-key-mdf_barra_meses button[kind="secondary"]:hover {{ background: #FFFFFF !important; }}
+        .st-key-mdf_barra_meses button[kind="primary"] {{
+            background: {config.COR_NAVY} !important;
+            border-color: {config.COR_NAVY} !important;
+            color: #FFFFFF !important;
+        }}
+        .st-key-mdf_lista_lojas {{ gap: 0 !important; }}
+        [class*="st-key-mdf_linha_loja_"] {{
+            border-bottom: 1px solid #EEF0F3;
+            border-radius: 6px;
+            padding: 6px 8px;
+        }}
+        .st-key-mdf_lista_lojas [data-testid="stLayoutWrapper"]:last-child > [class*="st-key-mdf_linha_loja_"] {{ border-bottom: 0; }}
+        [class*="st-key-mdf_linha_loja_"]:hover {{ background: #F7F8FA; }}
+        /* O Markdown do Streamlit tem margem negativa embaixo, que deixa o
+        texto fora do centro em relação aos botões da mesma linha. */
+        [data-testid="stMarkdownContainer"]:has(> .mdf-loja-cod, > .mdf-loja-razao, > .mdf-loja-consultor, > .mdf-lista-apoio, > .mdf-barra-mes-rotulo, > .mdf-paginacao-info) {{
+            margin-bottom: 0 !important;
+        }}
+        .mdf-loja-cod {{ font-weight: 700; color: {config.COR_NAVY}; margin: 0; }}
+        .mdf-loja-razao {{ font-weight: 600; color: #1F2937; margin: 0; overflow-wrap: anywhere; }}
+        .mdf-loja-consultor {{ color: #4B5563; margin: 0; overflow-wrap: anywhere; }}
+        .mdf-lista-apoio {{ color: #4B5563; margin: 0; }}
+        .mdf-lista-vazia {{ color: #4B5563; margin: 0; padding: 32px 16px; text-align: center; }}
+        [class*="st-key-analise_loja_"] button,
+        [class*="st-key-upload_loja_"] button {{
+            min-height: 32px !important;
+            height: 32px !important;
+            padding: 0 10px !important;
+            border-radius: 6px !important;
+            color: {config.COR_NAVY} !important;
+            white-space: nowrap;
+        }}
+        [class*="st-key-analise_loja_"] button p,
+        [class*="st-key-upload_loja_"] button p {{ font-size: 13px !important; font-weight: 600 !important; }}
+        [class*="st-key-analise_loja_"] button {{
+            background: #EAF0F7 !important;
+            border-color: #EAF0F7 !important;
+        }}
+        [class*="st-key-analise_loja_"] button:hover {{
+            background: #DCE6F2 !important;
+            border-color: #DCE6F2 !important;
+        }}
+        [class*="st-key-upload_loja_"] button {{
+            background: #FFFFFF !important;
+            border: 1px solid #D5DBE3 !important;
+        }}
+        [class*="st-key-upload_loja_"] button:hover {{
+            background: #F0F2F6 !important;
+            border-color: #4A6E90 !important;
         }}
 
         .mdf-produto-nome {{ font-size: 14px; color: #1A1A1A; margin: 4px 0 0 0; }}
@@ -805,17 +837,6 @@ def icone_x_svg() -> str:
         '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" '
         'style="vertical-align:-2px;" aria-hidden="true">'
         f'<path d="M4 4L12 12M12 4L4 12" stroke="{config.COR_AMBAR_TEXTO}" '
-        'stroke-width="2" stroke-linecap="round"/>'
-        '</svg>'
-    )
-
-
-def icone_mais_svg() -> str:
-    """Ícone de "+" (cartão "Enviar novo mês", página Selecionar Loja)."""
-    return (
-        '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" '
-        'style="vertical-align:-3px;" aria-hidden="true">'
-        f'<path d="M8 3V13M3 8H13" stroke="{config.COR_NAVY}" '
         'stroke-width="2" stroke-linecap="round"/>'
         '</svg>'
     )
