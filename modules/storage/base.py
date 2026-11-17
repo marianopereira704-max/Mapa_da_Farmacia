@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass
@@ -29,6 +30,7 @@ class ItemPasta:
     nome: str
     e_pasta: bool
     caminho_completo: str  # caminho relativo à raiz do armazenamento configurado
+    modificado_em: datetime | None = None  # com fuso; None = o backend não informa
 
 
 class StorageError(Exception):

@@ -4,7 +4,6 @@ componente clicável dos filtros. As regras ficam em modules/resultado_acao.py.
 from __future__ import annotations
 
 from html import escape
-from math import ceil
 
 import pandas as pd
 import streamlit as st
@@ -78,6 +77,7 @@ EXPLICACAO = f"""
 - **Preço do Antes:** o do Estoque. Se o produto estava sem estoque no dia do planograma, o do Retrato. Sem preço em nenhum dos dois, ele conta R$ 0 no Antes.
 - **Faturamento da gôndola:** faturamento depois menos faturamento antes, só com produtos do Mapa. Compara a gôndola com ela mesma, sem descontar o movimento do resto da loja.
 - **Cresceu ou Caiu:** diferença de pelo menos {config.RESULTADO_VARIACAO_MIN_UNIDADES} unidade e {config.RESULTADO_VARIACAO_MIN_PCT}%. Abaixo disso, o produto fica como Estável.
+- **Uma situação por produto:** se o produto terminou o mês sem estoque, ele fica como Zerou o estoque ou Saiu do mix, mesmo que também tenha caído ou crescido.
 - **Zerou o estoque:** terminou o mês sem estoque, mas vendeu no mês ou foi comprado nos últimos {config.RESULTADO_DIAS_COMPRA_RECENTE} dias.
 - **Saiu do mix:** sem estoque, sem venda no mês e sem compra nos últimos {config.RESULTADO_DIAS_COMPRA_RECENTE} dias. Produto sem data de compra entra aqui.
 - **Produtos novos:** a loja não tinha estoque nem venda antes e, depois, vendeu ou ficou com estoque.
@@ -119,12 +119,42 @@ def _dica(texto: str) -> str:
 # Topo da seção
 # ---------------------------------------------------------------------------
 
-def periodo_html(rotulo_antes: str, rotulo_depois: str) -> str:
+# Ícones de traço (24×24), desenhados com currentColor. Texto fixo do código,
+# nunca dado do usuário.
+ICONES = {
+    "calendario": '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/>',
+    "grupos": (
+        '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/>'
+        '<rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'
+    ),
+    "lista": '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+    "caixa": '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
+    "novo": '<path d="M12 5v14M5 12h14"/>',
+    "fora": '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
+}
+
+
+def _icone(nome: str) -> str:
     return (
-        '<div class="mdf-ra-periodo">'
-        f'<span>Antes: <b>{escape(rotulo_antes)}</b> {_dica("Média mensal de vendas dos 3 meses anteriores ao planograma.")}</span>'
-        f'<span>Depois: <b>{escape(rotulo_depois)}</b> {_dica("Vendas exatas do mês seguinte ao planograma.")}</span>'
-        '</div>'
+        '<svg class="mdf-ra-icone" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" '
+        f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{ICONES[nome]}</svg>'
+    )
+
+
+def titulo_secao_html(texto: str, icone: str) -> str:
+    return f'<p class="mdf-ra-h2">{_icone(icone)}{escape(texto)}</p>'
+
+
+def periodo_html(rotulo_antes: str, rotulo_depois: str) -> str:
+    """Subtítulo da seção e, ao lado, os dois períodos comparados, escritos
+    por extenso para ninguém precisar passar o mouse."""
+    return (
+        '<div class="mdf-ra-topo">'
+        '<p class="mdf-ra-subtitulo">O que mudou nas vendas da gôndola depois do planograma</p>'
+        f'<div class="mdf-ra-periodo">{_icone("calendario")}<dl>'
+        f'<dt>Antes</dt><dd>{escape(rotulo_antes)}</dd>'
+        f'<dt>Depois</dt><dd>{escape(rotulo_depois)}</dd>'
+        '</dl></div></div>'
     )
 
 
@@ -137,40 +167,50 @@ def _frase_comparacao(faturamento: float, unidades: float) -> str:
     return f"A gôndola faturou {trecho(faturamento)}, com {trecho(unidades)} unidades."
 
 
-def _escala_barras(*crescimentos: float) -> tuple[int, int]:
-    """(mínimo, máximo) do eixo das barras, em %: de −50 a +50, abrindo de 10
-    em 10 se algum valor passar disso. Sem valor negativo, começa em 0."""
-    maior = max(abs(c) * 100 for c in crescimentos)
-    limite = max(50, ceil(maior / 10) * 10)
-    return (0 if min(crescimentos) >= 0 else -limite), limite
+def _selo(fracao: float | None, rotulo: str) -> str:
+    if fracao is None:
+        return ""
+    if round(fracao * 100, 1) == 0:  # mostraria "+0,0%" ou "−0,0%"
+        return f'<span class="mdf-chip mdf-ra-selo mdf-chip-neutro"><b>0,0%</b> {rotulo}</span>'
+    if fracao < 0:
+        seta, classe = "↘", "mdf-chip-negativo"
+    else:
+        seta, classe = "↗", "mdf-chip-positivo"
+    return f'<span class="mdf-chip mdf-ra-selo {classe}">{seta} <b>{_pct_com_sinal(fracao)}</b> {rotulo}</span>'
 
 
-def _barra(rotulo: str, fracao: float, escala: tuple[int, int], cor: str, classe_texto: str) -> str:
-    minimo, maximo = escala
-    amplitude = maximo - minimo
-    zero = -minimo / amplitude * 100
-    largura = abs(fracao) * 100 / amplitude * 100
-    inicio = zero if fracao >= 0 else zero - largura
+def _linha_comparacao(quando: str, faturamento: float, unidades: float, maior: float, cor: str) -> str:
+    """Uma linha "Antes" ou "Depois": R$, barra na mesma escala das duas
+    linhas (a maior ocupa 100%) e unidades."""
+    largura = faturamento / maior * 100 if maior > 0 else 0
     return (
-        '<div>'
-        f'<div class="mdf-ra-barra-topo {classe_texto}"><span>{rotulo}</span><span>{_pct_com_sinal(fracao)}</span></div>'
-        '<div class="mdf-ra-barra">'
-        f'<span style="left: {inicio:.1f}%; width: {largura:.1f}%; background: {cor};"></span>'
-        f'<i style="left: {zero:.1f}%;"></i>'
-        '</div></div>'
+        '<div class="mdf-ra-linha">'
+        f'<span class="mdf-ra-quando">{quando}</span>'
+        f'<span class="mdf-ra-rs">{_rs(faturamento)}</span>'
+        f'<span class="mdf-ra-trilho"><span style="width: {largura:.1f}%; background: {cor};"></span></span>'
+        f'<span class="mdf-ra-un">{_numero(unidades)} un</span>'
+        '</div>'
     )
 
 
-def _eixo_barras(escala: tuple[int, int]) -> str:
-    minimo, maximo = escala
-    marcas = [f"{MENOS}{-minimo}%", "0", f"+{maximo}%"] if minimo < 0 else ["0", f"+{maximo}%"]
-    return f'<div class="mdf-ra-eixo">{"".join(f"<span>{m}</span>" for m in marcas)}</div>'
-
-
-def _cor_da_barra(fracao: float) -> tuple[str, str]:
-    if fracao < 0:
-        return config.COR_VERMELHO_TEXTO, "mdf-ra-negativo"
-    return config.COR_NAVY, "mdf-ra-navy"
+def _comparacao_html(resultado: ra.ResultadoAcao) -> str:
+    gondola = resultado.gondola
+    maior = max(gondola.faturamento_antes, gondola.faturamento_depois)
+    linhas = (
+        _linha_comparacao("Antes", gondola.faturamento_antes, gondola.unidades_antes, maior, config.COR_NAVY_CLARO)
+        + _linha_comparacao("Depois", gondola.faturamento_depois, gondola.unidades_depois, maior, config.COR_NAVY)
+    )
+    # O total "depois" junta duas origens; sem isto, o card do grupo Em
+    # estoque (que não conta os novos) parece contradizer o total.
+    unidades_novos = resultado.comparativo_do_grupo(ra.GRUPO_NOVO).unidades_depois if not resultado.tabela.empty else 0
+    composicao = ""
+    if unidades_novos > 0:
+        unidades_na_loja = resultado.comparativo_do_grupo(ra.GRUPO_NA_LOJA).unidades_depois
+        composicao = (
+            f'<p class="mdf-ra-composicao">Depois: <b>{_numero(unidades_na_loja)} un</b> dos produtos que já estavam '
+            f'na loja + <b>{_numero(unidades_novos)} un</b> dos produtos novos.</p>'
+        )
+    return f'<div class="mdf-ra-comparacao">{linhas}{composicao}</div>'
 
 
 def cartao_principal_html(resultado: ra.ResultadoAcao) -> str:
@@ -178,39 +218,70 @@ def cartao_principal_html(resultado: ra.ResultadoAcao) -> str:
     ganho = resultado.ganho_faturamento
     rotulo = (
         '<p class="mdf-ra-rotulo">Faturamento da gôndola '
-        f'{_dica("Quanto a gôndola faturou a mais ou a menos no mês depois do planograma, comparado com a média mensal antes.")}</p>'
-    )
-    linha_apoio = (
-        f'<p class="mdf-ra-apoio"><b>{_rs(gondola.faturamento_antes)} → {_rs(gondola.faturamento_depois)} por mês</b>'
-        f' · {_numero(gondola.unidades_antes)} → {_numero(gondola.unidades_depois)} unidades</p>'
+        f'{_dica("Faturamento depois menos faturamento antes, só com produtos do Mapa. Compara a gôndola com ela mesma.")}</p>'
     )
     if ganho is None:
-        return (
-            '<div class="mdf-ra-cartao"><div class="mdf-ra-principal">'
+        principal = (
             f'{rotulo}<p class="mdf-ra-valor mdf-ra-sem-base">Sem base para comparar</p>'
             '<p class="mdf-ra-frase">Não há venda suficiente antes do planograma para fazer a conta.</p>'
-            f'{linha_apoio}</div></div>'
         )
-    classe_valor = "mdf-ra-negativo" if round(ganho) < 0 else "mdf-ra-positivo"
-    sinal = "+" if round(ganho) > 0 else ""
-    faturamento, unidades = gondola.crescimento_faturamento, gondola.crescimento_unidades
-    escala = _escala_barras(faturamento, unidades)
+    else:
+        classe_valor = "mdf-ra-negativo" if round(ganho) < 0 else "mdf-ra-positivo"
+        sinal = "+" if round(ganho) > 0 else ""
+        faturamento, unidades = gondola.crescimento_faturamento, gondola.crescimento_unidades
+        frase = f'<p class="mdf-ra-frase">{_frase_comparacao(faturamento, unidades)}</p>' if unidades is not None else ""
+        principal = (
+            f'{rotulo}<p class="mdf-ra-valor {classe_valor}">{sinal}{_rs(ganho)} <small>/mês</small></p>'
+            f'<div class="mdf-ra-selos">{_selo(faturamento, "no faturamento")}{_selo(unidades, "em unidades")}</div>'
+            f'{frase}'
+        )
     return (
-        '<div class="mdf-ra-cartao"><div class="mdf-ra-principal">'
-        f'{rotulo}<p class="mdf-ra-valor {classe_valor}">{sinal}{_rs(ganho)} <small>/mês</small></p>'
-        f'<p class="mdf-ra-frase">{_frase_comparacao(faturamento, unidades)}</p>'
-        f'{linha_apoio}</div>'
-        '<div class="mdf-ra-barras">'
-        f'{_barra("Faturamento", faturamento, escala, *_cor_da_barra(faturamento))}'
-        f'{_barra("Unidades", unidades, escala, *_cor_da_barra(unidades))}'
-        f'{_eixo_barras(escala)}'
-        '</div></div>'
+        f'<div class="mdf-ra-cartao"><div class="mdf-ra-principal">{principal}</div>'
+        f'{_comparacao_html(resultado)}</div>'
     )
+
+
+# ---------------------------------------------------------------------------
+# Busca e ordenação da lista
+# ---------------------------------------------------------------------------
+
+ORDENS = {
+    "impacto": "Maior impacto",
+    "queda": "Maior queda",
+    "alta": "Maior alta",
+}
+
+DESCRICAO_ORDEM = {
+    "impacto": "do maior para o menor impacto em R$",
+    "queda": "da maior para a menor queda em unidades",
+    "alta": "da maior para a menor alta em unidades",
+}
+
+
+def buscar_e_ordenar(tabela: pd.DataFrame, busca: str, ordem: str) -> pd.DataFrame:
+    """Filtra pelo nome ou EAN (sem diferenciar maiúsculas) e ordena. A
+    tabela já chega do motor na ordem de impacto."""
+    termo = (busca or "").strip().lower()
+    if termo:
+        no_nome = tabela["produto"].astype(str).str.lower().str.contains(termo, regex=False)
+        # Produto sem EAN válido tem NaN, que viraria o texto "nan" e
+        # apareceria ao buscar "na".
+        no_ean = tabela["ean"].fillna("").astype(str).str.contains(termo, regex=False)
+        tabela = tabela[no_nome | no_ean]
+    if ordem in ("queda", "alta"):
+        tabela = tabela.sort_values(
+            ["variacao_unidades", "produto"], ascending=[ordem == "queda", True], kind="stable",
+        )
+    return tabela
 
 
 # ---------------------------------------------------------------------------
 # Itens dos filtros clicáveis
 # ---------------------------------------------------------------------------
+
+def _contagem(n: int, singular: str, plural: str) -> str:
+    return f"{n} {singular if n == 1 else plural}"
+
 
 def itens_cards(resultado: ra.ResultadoAcao) -> list[dict]:
     situacoes = resultado.tabela["situacao"].value_counts()
@@ -236,26 +307,32 @@ def itens_cards(resultado: ra.ResultadoAcao) -> list[dict]:
 
     return [
         {
-            "id": ra.GRUPO_NA_LOJA, "titulo": "Produtos em Estoque", "qtd": plural(n_na_loja), "selo": "selo-azul",
+            "id": ra.GRUPO_NA_LOJA, "titulo": "Produtos em estoque", "qtd": plural(n_na_loja), "selo": "selo-azul",
+            "icone": ICONES["caixa"],
             "dica": "A loja já tinha ou já vendia antes do planograma.",
             "valor": valor_na_loja, "valorClasse": classe_na_loja,
-            "apoio": (
-                f"{_numero(na_loja.unidades_antes)} → {_numero(na_loja.unidades_depois)} unidades por mês · "
-                f"{situacoes.get(ra.SITUACAO_CRESCEU, 0)} cresceram, {situacoes.get(ra.SITUACAO_CAIU, 0)} caíram"
+            "apoio": "",
+            "detalhe": (
+                f"Unidades dos que já estavam na loja: {_numero(na_loja.unidades_antes)} → "
+                f"{_numero(na_loja.unidades_depois)} por mês. "
+                f"{_contagem(situacoes.get(ra.SITUACAO_CRESCEU, 0), 'cresceu', 'cresceram')}, "
+                f"{_contagem(situacoes.get(ra.SITUACAO_CAIU, 0), 'caiu', 'caíram')}."
             ),
         },
         {
             "id": ra.GRUPO_NOVO, "titulo": "Produtos novos", "qtd": plural(n_novos), "selo": "selo-roxo",
+            "icone": ICONES["novo"],
             "dica": "A loja não tinha e comprou depois do planograma.",
             "valor": f"{situacoes.get(ra.SITUACAO_NOVO_COM_VENDA, 0)} de {n_novos} venderam" if n_novos else "Nenhum",
             "valorClasse": "navy",
-            "apoio": apoio_novos,
+            "apoio": apoio_novos, "detalhe": "",
         },
         {
             "id": ra.GRUPO_NAO_ENTROU, "titulo": "Não entraram", "qtd": plural(n_nao_entrou), "selo": "selo-neutro",
-            "dica": "Estão no Mapa, mas a loja não tem.",
+            "icone": ICONES["fora"],
+            "dica": "A loja não tinha, não comprou e não vendeu.",
             "valor": plural(n_nao_entrou), "valorClasse": "suave",
-            "apoio": "Oportunidade para melhorar o mix",
+            "apoio": "Estão no Mapa e a loja não tem", "detalhe": "",
         },
     ]
 
@@ -379,7 +456,11 @@ button:focus-visible {{ outline: 2px solid {config.COR_AZUL_TEXTO}; outline-offs
 .card.apagado {{ opacity: .45; }}
 .card.apagado:hover {{ opacity: .8; }}
 .card-topo {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
-.card-titulo {{ font-size: 16px; font-weight: 700; color: {config.COR_NAVY}; }}
+.card-titulo {{ display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; color: {config.COR_NAVY}; }}
+.card-icone {{ display: grid; place-items: center; width: 32px; height: 32px; border-radius: 999px; flex: none; }}
+.card-icone svg {{ width: 18px; height: 18px; }}
+.card-dica {{ font-size: 14px; font-weight: 400; color: #6B7280; cursor: help; vertical-align: middle; }}
+.card:focus-visible .card-dica .caixa-dica {{ display: block; }}
 .card-texto {{ color: #4B5563; }}
 .card-valor {{ font-size: 28px; font-weight: 700; line-height: 1.2; }}
 .valor-navy {{ color: {config.COR_NAVY}; }}
@@ -424,13 +505,27 @@ function card(item, ativo, escolher) {
     if (item.id === ativo) botao.classList.add("ativo");
     else if (ativo) botao.classList.add("apagado");
     const topo = elemento("span", "card-topo");
-    topo.append(elemento("span", "card-titulo", item.titulo), elemento("span", "selo " + item.selo, item.qtd));
-    botao.append(
-        topo,
-        elemento("span", "card-texto", item.dica),
-        elemento("span", "card-valor valor-" + item.valorClasse, item.valor),
-        elemento("span", "card-texto", item.apoio),
-    );
+    const titulo = elemento("span", "card-titulo");
+    if (item.icone) {
+        // O ícone é SVG fixo do código Python, não dado da loja.
+        const bola = elemento("span", "card-icone " + item.selo);
+        bola.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" '
+            + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + item.icone + "</svg>";
+        titulo.append(bola);
+    }
+    titulo.append(elemento("span", "", item.titulo));
+    topo.append(titulo, elemento("span", "selo " + item.selo, item.qtd));
+    const valor = elemento("span", "card-valor valor-" + item.valorClasse, item.valor);
+    if (item.detalhe) {
+        const dica = elemento("span", "com-dica card-dica", "ⓘ");
+        const caixa = elemento("span", "caixa-dica", item.detalhe);
+        caixa.setAttribute("role", "tooltip");
+        dica.append(caixa);
+        valor.append(" ", dica);
+        botao.setAttribute("aria-description", item.detalhe);
+    }
+    botao.append(topo, elemento("span", "card-texto", item.dica), valor);
+    if (item.apoio) botao.append(elemento("span", "card-texto", item.apoio));
     if (item.id === ativo) {
         botao.append(elemento("span", "card-filtrando", "✓ Filtrando a lista · clique de novo para ver todos"));
     }

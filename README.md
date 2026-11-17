@@ -255,7 +255,12 @@ rodando com dados reais.
 `scripts/relatorio_mensal.py` gera um `.xlsx` por ciclo com todas as
 lojas que enviaram algo naquele mês: dados da loja (API do TI), último
 envio, checklist de Mapa/Estoque/Modelo e miniaturas das fotos Antes e
-Depois. Roda localmente, lendo `.streamlit/secrets.toml`:
+Depois. A aba `Checklist` traz os mesmos checks sem as fotos, em ordem
+alfabética de consultor, e lojas que enviaram mas não estão mais ativas na
+API ficam só na aba `Fora da rede`, com status, data e motivo da
+inativação. Exceções por decisão manual, mesmo com a loja ativa na API,
+ficam em `config.LOJAS_FORA_DA_REDE_MANUAL`. Roda localmente, lendo
+`.streamlit/secrets.toml`:
 
 ```bash
 python scripts/relatorio_mensal.py --mes 2026-10
@@ -266,6 +271,19 @@ O relatório é uma **foto do storage no momento em que foi gerado** — um
 upload feito depois não aparece nele. Antes de investigar uma loja que
 "está errada no relatório", gere de novo e compare com o conteúdo real da
 pasta `{loja}/{AAAA-MM}/` no storage.
+
+O Excel pronto fica guardado em `_relatorios/` no bucket e é reaproveitado
+enquanto nada mudar no mês: arquivos de qualquer loja, cadastro na API ou
+`config.LOJAS_FORA_DA_REDE_MANUAL`. Ao mudar o conteúdo ou o layout da
+planilha, aumente `VERSAO_RELATORIO` no script. Sem a API, ou com alguma
+foto "não carregada", o Excel é entregue, mas não fica guardado.
+
+Falha de conexão ao baixar uma foto é repetida, numa conexão separada, **até
+dar certo, sem limite de tempo** (decisão do projeto): o relatório sai
+completo, mas com o bucket fora do ar a geração fica esperando ele voltar. Só
+não insiste no que tentar de novo não resolve, e esses casos saem avisados na
+célula: "Foto ilegível" (arquivo com defeito) e "Foto não carregada" (apagada
+durante a geração). Célula vazia quer dizer que a foto não foi enviada.
 
 ## Armadilhas já encontradas
 

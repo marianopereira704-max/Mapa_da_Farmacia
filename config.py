@@ -50,11 +50,13 @@ FILE_SPECS = {
         "basenames": ["foto_antes"],
         "extensions": [".jpg", ".jpeg", ".png"],
         "obrigatorio": False,
+        "mais_recente": True,  # ver file_resolver._escolher
     },
     "foto_depois": {
         "basenames": ["foto_depois"],
         "extensions": [".jpg", ".jpeg", ".png"],
         "obrigatorio": False,
+        "mais_recente": True,  # ver file_resolver._escolher
     },
     "ajuste_mix": {
         "basenames": ["ajuste_mix"],
@@ -100,6 +102,16 @@ PREFIXOS_CATEGORIA_EXCLUIDOS = ["RX_"]
 # Ajuste este valor conforme necessário — não precisa mexer em nenhum
 # outro lugar do código.
 DEMANDA_MINIMA_BASE_NACIONAL = 1000
+
+# ---------------------------------------------------------------------------
+# Relatório mensal de conferência (ver scripts/relatorio_mensal.py)
+# ---------------------------------------------------------------------------
+
+# Lojas que vão para a aba "Fora da rede" naquele ciclo mesmo com status
+# "Ativo" na API, por decisão manual — as demais são detectadas pela API.
+LOJAS_FORA_DA_REDE_MANUAL = {
+    "2026-10": {"1876"},
+}
 
 # ---------------------------------------------------------------------------
 # Regras de negócio (Aba 1 — Ajuste de Mix)

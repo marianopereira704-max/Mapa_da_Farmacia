@@ -171,6 +171,77 @@ def test_falha_de_rede_nao_abre_a_sugestao_por_cima_do_salvo(abrir, monkeypatch)
     assert not [b for b in at.button if "Salvar" in b.label]
 
 
+# ---- Faixa de alterações não salvas ----
+
+def _faixa(at: AppTest) -> str:
+    return next(m.value for m in at.markdown if m.value.startswith('<p class="mdf-faixa-ajuste-texto">'))
+
+
+def _botao(at: AppTest, chave: str):
+    return next(b for b in at.button if b.key == chave)
+
+
+def test_faixa_sem_ajuste_salvo(abrir):
+    assert "Ajuste ainda não salvo" in _faixa(abrir())
+
+
+def test_faixa_conta_alteracoes_e_salvar_zera(abrir, dados):
+    at = abrir()
+    _salvar(at)
+    assert "Tudo salvo. Último salvamento em" in _faixa(at)
+    assert json.loads((dados / "0000" / "2026-09" / "ajuste_mix.json").read_text(encoding="utf-8"))["salvo_em"]
+
+    _campo(at, COM_ESTOQUE).set_value(9).run()
+    _campo(at, SUGERIDO_A).set_value(0).run()
+    assert "2 alterações não salvas" in _faixa(at)
+
+    _salvar(at)
+    assert "Tudo salvo" in _faixa(at)
+    assert _salvo_no_arquivo(dados)[COM_ESTOQUE] == 9
+
+
+def test_descartar_volta_ao_ultimo_salvamento(abrir, dados):
+    at = abrir()
+    _salvar(at)
+    antes = _salvo_no_arquivo(dados)
+    _campo(at, COM_ESTOQUE).set_value(9).run()
+    assert "1 alteração não salva" in _faixa(at)
+
+    _botao(at, "ajuste_descartar").click().run()
+    assert not at.exception, at.exception
+    assert _campo(at, COM_ESTOQUE).value == 5
+    assert "Tudo salvo" in _faixa(at)
+    assert _salvo_no_arquivo(dados) == antes
+
+
+def test_ajuste_salvo_antes_desta_versao_aparece_sem_hora(abrir, dados):
+    (dados / "0000" / "2026-09" / "ajuste_mix.json").write_text(
+        json.dumps({"produtos": [{"ean_original": COM_ESTOQUE, "quantidade": 5}]}), encoding="utf-8"
+    )
+    assert _faixa(abrir()).endswith("Tudo salvo. Ajuste salvo.</p>")
+
+
+def test_sugestao_de_gc_avisa_alteracao_nao_salva(abrir):
+    # O clique em "Salvar agora" fica no teste de navegador: aqui o AppTest
+    # sempre volta para a página padrão na execução seguinte.
+    at = abrir()
+    _salvar(at)
+    _campo(at, COM_ESTOQUE).set_value(9).run()
+    _botao(at, "aba_analise_analise-sugestao-gc").click().run()
+    assert not at.exception, at.exception
+    assert any("Exportar PDF" in b.label for b in at.get("download_button")), "não abriu a Sugestão de GC"
+    assert any("1 alteração sem salvar" in m.value for m in at.markdown)
+    assert any(b.key == "gc_salvar_agora" for b in at.button)
+
+
+def test_sugestao_de_gc_sem_alteracao_nao_avisa(abrir):
+    at = abrir()
+    _salvar(at)
+    _botao(at, "aba_analise_analise-sugestao-gc").click().run()
+    assert not at.exception, at.exception
+    assert not any("sem salvar" in m.value for m in at.markdown)
+
+
 def test_arquivo_corrompido_avisa_e_abre_a_sugestao(abrir, dados):
     (dados / "0000" / "2026-09" / "ajuste_mix.json").write_text("{quebrado", encoding="utf-8")
     at = abrir()

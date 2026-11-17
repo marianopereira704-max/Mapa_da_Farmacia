@@ -15,6 +15,7 @@ remoto). Serve como plano B enquanto a aprovação do Graph API (backend
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .base import ArquivoNaoEncontradoError, ItemPasta, OneDriveStorage, StorageError
@@ -58,6 +59,7 @@ class LocalFolderStorage(OneDriveStorage):
                 nome=entrada.name,
                 e_pasta=entrada.is_dir(),
                 caminho_completo=caminho_rel_item,
+                modificado_em=datetime.fromtimestamp(entrada.stat().st_mtime, timezone.utc),
             ))
         return itens
 

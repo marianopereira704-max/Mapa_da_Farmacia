@@ -164,6 +164,7 @@ class DigitalOceanSpacesStorage(OneDriveStorage):
                         nome=nome,
                         e_pasta=False,
                         caminho_completo=self._para_relativo(chave_completa),
+                        modificado_em=obj.get("LastModified"),
                     ))
         except ClientError as e:
             raise StorageError(f"Falha ao listar pasta '{caminho_relativo}': {e}") from e

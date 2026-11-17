@@ -401,6 +401,16 @@ def aplicar_estilo() -> None:
             margin-top: 6px;
         }}
 
+        /* ---- Ajuste de mix: faixa do último salvamento ---- */
+        .st-key-mdf_faixa_ajuste, .st-key-mdf_faixa_ajuste_pendente {{
+            border-radius: 10px;
+            padding: 8px 12px 8px 16px;
+            background: #F4F6F9;
+        }}
+        .st-key-mdf_faixa_ajuste_pendente {{ background: #FAEEDA; }}
+        .mdf-faixa-ajuste-texto {{ margin: 0; color: #1F2937; font-weight: 600; }}
+        .st-key-mdf_faixa_ajuste_pendente .mdf-faixa-ajuste-texto {{ color: #6B3F08; }}
+
         /* ---- Selecionar Loja: barra de meses e lista de lojas ---- */
         .st-key-mdf_barra_meses {{
             background: #F0F2F6;
@@ -429,7 +439,7 @@ def aplicar_estilo() -> None:
         [class*="st-key-mdf_linha_loja_"]:hover {{ background: #F7F8FA; }}
         /* O Markdown do Streamlit tem margem negativa embaixo, que deixa o
         texto fora do centro em relação aos botões da mesma linha. */
-        [data-testid="stMarkdownContainer"]:has(> .mdf-loja-cod, > .mdf-loja-razao, > .mdf-loja-consultor, > .mdf-lista-apoio, > .mdf-barra-mes-rotulo, > .mdf-paginacao-info) {{
+        [data-testid="stMarkdownContainer"]:has(> .mdf-loja-cod, > .mdf-loja-razao, > .mdf-loja-consultor, > .mdf-lista-apoio, > .mdf-barra-mes-rotulo, > .mdf-paginacao-info, > .mdf-faixa-ajuste-texto) {{
             margin-bottom: 0 !important;
         }}
         .mdf-loja-cod {{ font-weight: 700; color: {config.COR_NAVY}; margin: 0; }}
@@ -544,12 +554,20 @@ def aplicar_estilo() -> None:
         }}
 
         /* ---- Resultado da ação (Aba 3 — Conferência). Mesma escala em toda
-        a seção: espaço 4/8/12/16/24, fonte 12/14/16/20/44, cantos 12/999. Os
+        a seção: espaço 4/8/12/16/24, fonte 12/14/16/20/28/44, cantos 12/999. Os
         textos em <p> precisam do seletor longo: o st.markdown define a fonte
         do <p> com prioridade maior que a de uma classe sozinha. */
         div[data-testid="stMarkdownContainer"] p.mdf-secao-titulo {{ font-size: 28px; font-weight: 700; color: {config.COR_NAVY}; line-height: 1.2; margin: 0; }}
-        .mdf-ra-periodo {{ display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: #4B5563; margin: 0 0 8px 0; }}
-        .mdf-ra-periodo b {{ color: #1F2937; font-weight: 600; }}
+        .mdf-ra-icone {{ width: 20px; height: 20px; flex: none; }}
+        .mdf-ra-topo {{ display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 16px 0; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-subtitulo {{ margin: 0; font-size: 16px; color: #4B5563; }}
+        .mdf-ra-periodo {{
+            display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; background: #FFFFFF; border-radius: 12px;
+            box-shadow: 0 1px 2px rgba(23,55,94,.06), 0 2px 8px rgba(23,55,94,.04); color: {config.COR_NAVY};
+        }}
+        .mdf-ra-periodo dl {{ margin: 0; display: grid; grid-template-columns: auto auto; gap: 4px 12px; font-size: 14px; line-height: 1.4; }}
+        .mdf-ra-periodo dt {{ font-size: 12px; color: #6B7280; align-self: center; }}
+        .mdf-ra-periodo dd {{ margin: 0; font-weight: 600; color: #1F2937; }}
         .mdf-ra-cartao {{
             display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 32px; align-items: center;
             background: #FFFFFF; border-radius: 12px; padding: 24px; margin: 0 0 16px 0;
@@ -562,18 +580,22 @@ def aplicar_estilo() -> None:
         div[data-testid="stMarkdownContainer"] p.mdf-ra-sem-base {{ font-size: 28px; color: {config.COR_NAVY}; }}
         div[data-testid="stMarkdownContainer"] p.mdf-ra-frase {{ margin: 0; font-size: 16px; color: #1F2937; }}
         div[data-testid="stMarkdownContainer"] p.mdf-ra-apoio {{ margin: 0; font-size: 14px; color: #4B5563; }}
-        .mdf-ra-apoio b {{ color: {config.COR_NAVY}; font-weight: 700; }}
-        div[data-testid="stMarkdownContainer"] p.mdf-ra-h2 {{ margin: 16px 0 4px 0; font-size: 20px; font-weight: 700; color: {config.COR_NAVY}; line-height: 1.3; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-h2 {{ display: flex; align-items: center; gap: 8px; margin: 16px 0 4px 0; font-size: 20px; font-weight: 700; color: {config.COR_NAVY}; line-height: 1.3; }}
         .mdf-ra-positivo {{ color: {config.COR_VERDE_TEXTO}; }}
         .mdf-ra-negativo {{ color: {config.COR_VERMELHO_TEXTO}; }}
         .mdf-ra-suave {{ color: #4B5563; }}
-        .mdf-ra-navy {{ color: {config.COR_NAVY}; }}
-        .mdf-ra-barras {{ display: flex; flex-direction: column; gap: 16px; }}
-        .mdf-ra-barra-topo {{ display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; font-weight: 600; }}
-        .mdf-ra-barra {{ position: relative; height: 8px; background: {config.COR_CINZA_BG}; border-radius: 999px; }}
-        .mdf-ra-barra span {{ position: absolute; top: 0; height: 100%; border-radius: 999px; }}
-        .mdf-ra-barra i {{ position: absolute; top: -2px; width: 1px; height: 12px; background: #9AA5B4; }}
-        .mdf-ra-eixo {{ display: flex; justify-content: space-between; font-size: 12px; color: #6B7280; }}
+        .mdf-ra-selos {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+        .mdf-chip.mdf-ra-selo {{ gap: 4px; padding: 4px 12px; border-radius: 999px; font-weight: 600; }}
+        .mdf-ra-selo b {{ font-size: 14px; }}
+        .mdf-ra-comparacao {{ display: flex; flex-direction: column; gap: 16px; min-width: 0; font-variant-numeric: tabular-nums; }}
+        .mdf-ra-linha {{ display: grid; grid-template-columns: 56px 88px minmax(0, 1fr) 64px; align-items: center; gap: 12px; font-size: 14px; }}
+        .mdf-ra-quando {{ font-weight: 600; color: #4B5563; }}
+        .mdf-ra-rs {{ font-weight: 700; color: #1F2937; text-align: right; }}
+        .mdf-ra-un {{ color: #4B5563; text-align: right; }}
+        .mdf-ra-trilho {{ display: block; height: 10px; background: {config.COR_CINZA_BG}; border-radius: 999px; overflow: hidden; }}
+        .mdf-ra-trilho span {{ display: block; height: 100%; border-radius: 999px; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-composicao {{ margin: 0; padding-top: 12px; border-top: 1px solid #F0F1F4; font-size: 14px; color: #4B5563; }}
+        .mdf-ra-composicao b {{ color: #1F2937; font-weight: 600; }}
         .mdf-ra-tabela-caixa {{ overflow-x: auto; background: #FFFFFF; border-radius: 12px; padding: 8px; margin: 8px 0; }}
         .mdf-ra-tabela {{ width: 100%; min-width: 760px; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }}
         .mdf-ra-tabela th {{

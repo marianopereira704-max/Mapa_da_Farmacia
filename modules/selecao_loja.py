@@ -79,9 +79,18 @@ def texto_de_destino(loja: str, mes: str, mes_de_hoje: str, mes_legivel) -> str:
     return f"{texto}, mês anterior ao atual" if mes < mes_de_hoje else texto
 
 
-def arquivos_do_upload(chaves: list[str], mes_ja_existe: bool) -> list[str]:
-    """Retrato e Estoque atualizado só fazem sentido em mês que já tem arquivos."""
-    return [c for c in chaves if mes_ja_existe or c not in ("retrato_vendas", "estoque_atualizado")]
+FOTOS_SO_NO_MES_ATUAL = ("foto_antes", "foto_depois")
+
+
+def arquivos_do_upload(chaves: list[str], mes_ja_existe: bool, mes_e_o_atual: bool = True) -> list[str]:
+    """Retrato e Estoque atualizado só fazem sentido em mês que já tem arquivos.
+    Foto Antes e Foto Depois só vão para o mês atual (decisão de 09/11/2026):
+    foto de outro mês não comprova a ação daquele mês."""
+    return [
+        c for c in chaves
+        if (mes_ja_existe or c not in ("retrato_vendas", "estoque_atualizado"))
+        and (mes_e_o_atual or c not in FOTOS_SO_NO_MES_ATUAL)
+    ]
 
 
 def _sem_acento(texto: str) -> str:

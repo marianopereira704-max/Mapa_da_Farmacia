@@ -125,6 +125,12 @@ def test_retrato_e_estoque_atualizado_so_em_mes_com_arquivos():
     assert arquivos_do_upload(chaves, False) == ["mapa_farmacia", "estoque"]
 
 
+def test_fotos_so_no_mes_atual():
+    chaves = ["mapa_farmacia", "foto_antes", "foto_depois", "retrato_vendas"]
+    assert arquivos_do_upload(chaves, True, mes_e_o_atual=True) == chaves
+    assert arquivos_do_upload(chaves, True, mes_e_o_atual=False) == ["mapa_farmacia", "retrato_vendas"]
+
+
 # ---- Busca ----
 
 CADASTRO = {

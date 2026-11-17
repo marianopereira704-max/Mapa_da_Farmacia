@@ -21,9 +21,14 @@ Commit e publicação só com pedido explícito, em cada passo.
 - Lista de lojas com paginação, 20 por página. Busca, filtro ou troca de mês voltam
   à primeira página.
 - Mês atual vazio: mensagem e atalho para o mês anterior.
+- Foto Antes e Foto Depois só podem ser enviadas para o mês atual, inclusive na
+  virada do mês (decisão de 09/11/2026). Os outros arquivos continuam podendo ir
+  para um mês passado.
 - O envio para um mês passado é permitido. O Excel mostra a data e a hora do envio
   ("Último envio", em Brasília) nas abas Conferência, Checklist e Fora da rede.
-- Exportar com um clique. Se não funcionar bem no teste, passa a dois cliques.
+- Sem botão de exportar no app: sem login individual, qualquer pessoa com a senha
+  poderia baixar o relatório de todas as lojas. O relatório continua só como script,
+  rodado localmente (decisão de 09/11/2026).
 - Além de "Último envio", o Excel mostra a data de Foto Antes e de Foto Depois, lida
   do próprio arquivo no bucket, porque um envio posterior muda o "Último envio".
 - Tabela de Pendências também com paginação, 20 lojas por página.
@@ -76,23 +81,25 @@ visível com o painel "Arquivos do mês".
 - Painel "Arquivos do mês · N de 7", com botão para enviar.
 - "Enviar agora" na Conferência, quando faltar Retrato ou Estoque atualizado.
 
-### 4.5 Ajuste de mix com alteração não salva
+### 4.5 Ajuste de mix com alteração não salva: feito
+
+O `ajuste_mix.json` passa a gravar `salvo_em`. Ajustes salvos antes disso aparecem
+como "Ajuste salvo", sem hora.
 
 - Faixa com o número de alterações, último salvamento, "Salvar" e "Descartar".
 - Na Sugestão de GC, aviso de que o PDF usa o último ajuste salvo.
 
 ## Etapa 5: Pendências e exportação
 
-### 5.1 Relatório dentro do app
+### 5.1 Relatório (script local)
 
-- Mover a lógica de `scripts/relatorio_mensal.py` para `modules/relatorio_mensal.py`.
-  O script fica só com os argumentos e a gravação do arquivo.
+- Continua em `scripts/relatorio_mensal.py`, fora do app.
 - "Último envio" no Checklist: feito.
 - Colunas com a data de Foto Antes e de Foto Depois (`modificado_em` do bucket), em
   Brasília.
 - Incluir colunas de Retrato e Estoque atualizado (7 arquivos, igual a Pendências).
 - Aba "Fora da rede": coluna de motivo e loja ativa sem consultor passa a ir para lá.
-- Não gerar com a API fora do ar, no script e no app.
+- Não gerar com a API fora do ar.
 - Aumentar `VERSAO_RELATORIO`.
 
 ### 5.2 Página Pendências
@@ -104,29 +111,28 @@ visível com o painel "Arquivos do mês".
   20 lojas por página.
 - Regras sem Streamlit e com testes (`pendencias_do_mes`).
 
-### 5.3 Botão Exportar
+### 5.3 Botão Exportar: cancelado
 
-Primeiro com um clique: `download_button` com função geradora.
-
-Pontos a observar no teste: na documentação do Streamlit, a função geradora ignora
-comandos do Streamlit, então provavelmente não dá para mostrar "Gerando relatório"
-durante a espera. Em espera longa, o download também pode ser cortado.
-
-Se não funcionar bem: "Exportar relatório" gera com `st.spinner` e, ao terminar,
-aparece "Baixar".
+Sem login individual, o botão deixaria o relatório de todas as lojas ao alcance de
+qualquer pessoa com a senha do app.
 
 ### 5.4 Verificação antes de publicar
 
-- Testes automáticos e navegador local com dados reais, sem gravar fora de `_relatorios/`.
-- Tempo da lista com o mês mais cheio (191 lojas).
-- Tela durante a espera, com bucket fora do ar simulado.
-- Depois de publicar, com autorização: tempo e memória no Streamlit Cloud, e uma
-  geração com espera longa.
+- Testes automáticos e navegador local com dados reais, sem enviar nada.
+- Depois de publicar, com autorização: tempo e memória no Streamlit Cloud.
 
 ## Ordem
 
-4.1 → 4.2 → 4.3 → 4.4 → 4.5 → 5.1 → 5.2 → 5.3 → 5.4. A 4.2 pode ser publicada
-sozinha, porque corrige um erro que existe hoje.
+4.1 → 4.2 → 4.3 → 4.4 → 4.5 → 5.1 → 5.2 → 5.4. 4.2 a 4.4 publicados em 06/11/2026.
+
+## Etapa 6: várias fotos Antes e Depois (decisões de 09/11/2026)
+
+- Só Foto Antes e Foto Depois; o Modelo continua um arquivo só.
+- Até 5 de cada por loja e mês. Novo envio acrescenta, não substitui.
+- Sem apagar pelo app: foto enviada por engano é apagada no bucket pelo responsável.
+- Conferência: uma foto por vez, com setas, mantendo Antes, Modelo e Depois lado a lado.
+- Excel: a primeira foto e o total.
+- Protótipo antes de mexer no app.
 
 ## Fora deste plano
 
@@ -138,5 +144,5 @@ fica para depois.
 - "Último envio" é único por loja e mês: qualquer envio posterior, como o Retrato do
   mês seguinte, muda essa data. As colunas de data de cada foto cobrem esse caso.
 - Trocar a tela inicial muda o hábito de quem já usa os cartões de mês.
-- O Cloud pode reiniciar durante uma espera muito longa, e aí a geração recomeça do
-  zero. Só dá para verificar depois de publicar.
+- A página Pendências mostra a situação de envio de todas as lojas a quem tiver a
+  senha do app, como a lista de lojas já mostra hoje.

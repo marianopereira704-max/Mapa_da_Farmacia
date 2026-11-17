@@ -120,24 +120,38 @@ def localizar_item(
 
     # 1a passada: correspondência EXATA do nome normalizado (mais segura —
     # evita, por exemplo, confundir "estoque_pmf_backup" com "estoque").
-    for extensao in extensoes_aceitas:
-        for base_norm in basenames_normalizados:
-            item = candidatos.get(base_norm, {}).get(extensao)
-            if item is not None:
-                return item
+    exatos = [
+        candidatos[base_norm][extensao]
+        for extensao in extensoes_aceitas
+        for base_norm in basenames_normalizados
+        if extensao in candidatos.get(base_norm, {})
+    ]
+    if exatos:
+        return _escolher(exatos, spec)
 
     # 2a passada: o nome esperado aparece DENTRO do nome do arquivo — cobre
     # variações como "estoque da loja.xlsx" ou "mapa_farmacia_loja1188.xlsx",
     # onde o consultor acrescentou palavras extras ao nome padrão.
-    for extensao in extensoes_aceitas:
-        for nome_base_arquivo, exts in candidatos.items():
-            item = exts.get(extensao)
-            if item is None:
-                continue
-            if any(base_norm in nome_base_arquivo for base_norm in basenames_normalizados):
-                return item
+    aproximados = [
+        exts[extensao]
+        for extensao in extensoes_aceitas
+        for nome_base_arquivo, exts in candidatos.items()
+        if extensao in exts and any(base_norm in nome_base_arquivo for base_norm in basenames_normalizados)
+    ]
+    if aproximados:
+        return _escolher(aproximados, spec)
 
     return None
+
+
+def _escolher(itens: list[ItemPasta], spec: dict) -> ItemPasta:
+    """`itens` vem na ordem de prioridade de extensão, e o primeiro é o padrão.
+    Com spec['mais_recente'], vale o último enviado (reenviar uma foto com outra
+    extensão deixou duas versões em pastas antigas); max() fica com o primeiro
+    no empate, então sem data, ou com a mesma data, a prioridade continua valendo."""
+    if not spec.get("mais_recente"):
+        return itens[0]
+    return max(itens, key=lambda item: item.modificado_em.timestamp() if item.modificado_em else float("-inf"))
 
 
 def localizar_arquivo(

@@ -149,7 +149,7 @@ def test_cartao_principal_explica_faturamento_subindo_com_menos_unidades():
     html = tela.cartao_principal_html(_resultado(90, 1100))
     assert "+R$ 100" in html and "mdf-ra-positivo" in html
     assert "A gôndola faturou 10,0% mais, com 10,0% menos unidades." in html
-    assert "R$ 1.000 → R$ 1.100 por mês" in html and "100 → 90 unidades" in html
+    assert "R$ 1.000" in html and "R$ 1.100" in html and "100 un" in html and "90 un" in html
 
 
 def test_cartao_principal_nao_fala_do_resto_da_loja():
@@ -175,7 +175,91 @@ def test_texto_da_variacao(situacao, grupo, antes, depois, pct, esperado):
 
 def test_unidades_do_cartao_principal_sem_casa_decimal():
     resultado = ra.ResultadoAcao(pd.DataFrame(), ra.Comparativo(156.7, 152, 1000, 900))
-    assert "157 → 152 unidades" in tela.cartao_principal_html(resultado)
+    html = tela.cartao_principal_html(resultado)
+    assert "157 un" in html and "152 un" in html
+
+
+def test_barras_antes_e_depois_na_mesma_escala():
+    html = tela.cartao_principal_html(_resultado(90, 1100))
+    assert "width: 90.9%" in html and "width: 100.0%" in html
+
+
+def test_cartao_principal_mostra_selos_de_faturamento_e_unidades():
+    html = tela.cartao_principal_html(_resultado(90, 1100))
+    assert "+10,0%</b> no faturamento" in html and "−10,0%</b> em unidades" in html
+
+
+@pytest.mark.parametrize("fracao", [0.0, 0.0004, -0.0004])
+def test_selo_sem_mudanca_fica_neutro_e_sem_seta(fracao):
+    html = tela._selo(fracao, "em unidades")
+    assert "mdf-chip-neutro" in html and "<b>0,0%</b>" in html and "↗" not in html and "↘" not in html
+
+
+def _resultado_com_novos() -> ra.ResultadoAcao:
+    tabela = pd.DataFrame([
+        {"grupo": ra.GRUPO_NA_LOJA, "situacao": ra.SITUACAO_CAIU, "unidades_antes": 157.0, "unidades_depois": 148.0,
+         "faturamento_antes": 2962.0, "faturamento_depois": 3000.0},
+        {"grupo": ra.GRUPO_NOVO, "situacao": ra.SITUACAO_NOVO_COM_VENDA, "unidades_antes": 0.0, "unidades_depois": 4.0,
+         "faturamento_antes": 0.0, "faturamento_depois": 259.0},
+    ])
+    return ra.ResultadoAcao(tabela, ra.Comparativo(157, 152, 2962, 3259))
+
+
+def test_cartao_principal_separa_unidades_dos_novos():
+    html = tela.cartao_principal_html(_resultado_com_novos())
+    assert "<b>148 un</b> dos produtos que já estavam na loja + <b>4 un</b> dos produtos novos" in html
+
+
+def test_cartao_principal_sem_novos_nao_mostra_composicao():
+    assert "dos produtos novos" not in tela.cartao_principal_html(_resultado(90, 1100))
+
+
+def test_card_em_estoque_leva_o_detalhe_para_a_dica():
+    card = tela.itens_cards(_resultado_com_novos())[0]
+    assert card["apoio"] == ""
+    assert card["detalhe"] == "Unidades dos que já estavam na loja: 157 → 148 por mês. 0 cresceram, 1 caiu."
+
+
+def test_card_nao_entraram_nao_sugere_compra():
+    card = tela.itens_cards(_resultado_com_novos())[2]
+    assert card["apoio"] == "Estão no Mapa e a loja não tem"
+
+
+def _lista() -> pd.DataFrame:
+    return pd.DataFrame([
+        {"produto": "Benegrip", "ean": "789001", "variacao_unidades": -4.3},
+        {"produto": "Natus Gerin", "ean": "789002", "variacao_unidades": 2.0},
+        {"produto": "Expec Xarope", "ean": "789003", "variacao_unidades": -5.0},
+    ])
+
+
+def test_busca_por_nome_sem_diferenciar_maiusculas():
+    assert list(tela.buscar_e_ordenar(_lista(), "  natus ", "impacto")["produto"]) == ["Natus Gerin"]
+
+
+def test_busca_nao_acha_produto_sem_ean_pelo_texto_nan():
+    lista = pd.concat([_lista(), pd.DataFrame([{"produto": "Sem código", "ean": float("nan"), "variacao_unidades": 0.0}])])
+    assert list(tela.buscar_e_ordenar(lista, "na", "impacto")["produto"]) == ["Natus Gerin"]
+
+
+def test_limpar_filtros_tambem_limpa_a_busca(abrir):
+    at = abrir(**{f"resultado_busca::{CICLO}": "nada assim"})
+    assert "Nenhum produto neste filtro" in _textos(at)
+    next(b for b in at.button if b.label == "Limpar filtros").click().run()
+    assert "Mostrando 3 de 3" in _textos(at)
+
+
+def test_busca_por_ean():
+    assert list(tela.buscar_e_ordenar(_lista(), "789003", "impacto")["produto"]) == ["Expec Xarope"]
+
+
+@pytest.mark.parametrize("ordem, esperado", [
+    ("impacto", ["Benegrip", "Natus Gerin", "Expec Xarope"]),
+    ("queda", ["Expec Xarope", "Benegrip", "Natus Gerin"]),
+    ("alta", ["Natus Gerin", "Benegrip", "Expec Xarope"]),
+])
+def test_ordenacao_da_lista(ordem, esperado):
+    assert list(tela.buscar_e_ordenar(_lista(), "", ordem)["produto"]) == esperado
 
 
 def test_textos_das_colunas_usam_un_sem_ponto():
@@ -183,27 +267,6 @@ def test_textos_das_colunas_usam_un_sem_ponto():
     assert tela._texto_antes(row) == "2 un · R$ 90"
     assert tela._texto_depois(row) == "1 un · R$ 45"
     assert tela._texto_depois({**row, "unidades_depois": 0}) == "0 un"
-
-
-@pytest.mark.parametrize("crescimentos, escala", [
-    ((-0.03, 0.05), (-50, 50)),
-    ((0.03, 0.05), (0, 50)),
-    ((0.0, 0.0), (0, 50)),
-    ((-0.03, -0.05), (-50, 50)),
-    ((0.03, 0.62), (0, 70)),
-    ((-0.71, 0.05), (-80, 80)),
-])
-def test_escala_das_barras(crescimentos, escala):
-    assert tela._escala_barras(*crescimentos) == escala
-
-
-def test_barra_negativa_cresce_para_a_esquerda_do_zero():
-    html = tela._barra("G", -0.03, (-50, 50), "#000", "x")
-    assert "left: 47.0%; width: 3.0%" in html and "left: 50.0%" in html
-
-
-def test_barra_positiva_sem_lado_negativo_comeca_no_zero():
-    assert "left: 0.0%; width: 10.0%" in tela._barra("G", 0.05, (0, 50), "#000", "x")
 
 
 def test_csv_abre_no_excel_em_portugues():

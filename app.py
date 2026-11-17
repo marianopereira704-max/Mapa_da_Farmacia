@@ -38,6 +38,7 @@ import pandas as pd
 import streamlit as st
 
 import config
+import modules.ajuste_estado as ajuste_estado
 import modules.auth as auth
 import modules.data_loader as dl
 import modules.image_utils as image_utils
@@ -416,38 +417,48 @@ def _renderizar_resultado_acao(
 
     chave_grupo = f"resultado_grupo::{ciclo_selecionado}"
     chave_situacao = f"resultado_situacao::{ciclo_selecionado}"
+    chave_busca = f"resultado_busca::{ciclo_selecionado}"
 
-    st.markdown(
-        '<p class="mdf-ra-h2">Por grupo</p>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(resultado_tela.titulo_secao_html("Desempenho por grupo", "grupos"), unsafe_allow_html=True)
     resultado_tela.filtro_clicavel("cards", resultado_tela.itens_cards(resultado), chave_grupo)
 
     grupo = st.session_state.get(chave_grupo)
     situacao = st.session_state.get(chave_situacao)
     tabela = resultado.do_grupo(grupo) if grupo else resultado.tabela
 
-    c_titulo, c_limpar = st.columns([0.8, 0.2], vertical_alignment="bottom")
+    c_titulo, c_busca, c_ordem, c_limpar = st.columns([0.34, 0.3, 0.2, 0.16], vertical_alignment="bottom")
     with c_titulo:
-        st.markdown('<p class="mdf-ra-h2">Produto a produto</p>', unsafe_allow_html=True)
+        st.markdown(resultado_tela.titulo_secao_html("Produto a produto", "lista"), unsafe_allow_html=True)
+    with c_busca:
+        busca = st.text_input(
+            "Buscar produto", key=chave_busca,
+            placeholder="Buscar produto ou EAN", label_visibility="collapsed",
+        )
+    with c_ordem:
+        ordem = st.selectbox(
+            "Ordenar por", list(resultado_tela.ORDENS), format_func=resultado_tela.ORDENS.get,
+            key=f"resultado_ordem::{ciclo_selecionado}", label_visibility="collapsed",
+        )
     with c_limpar:
-        if grupo or situacao:
+        if grupo or situacao or busca.strip():
             def _limpar_filtros() -> None:
                 st.session_state[chave_grupo] = None
                 st.session_state[chave_situacao] = None
+                st.session_state[chave_busca] = ""
 
             st.button("Limpar filtros", key=f"resultado_limpar::{ciclo_selecionado}", width="stretch", on_click=_limpar_filtros)
 
     resultado_tela.filtro_clicavel("chips", resultado_tela.itens_chips(tabela, situacao), chave_situacao)
     if situacao:
         tabela = tabela[tabela["situacao"] == situacao]
+    tabela = resultado_tela.buscar_e_ordenar(tabela, busca, ordem)
 
     if tabela.empty:
         st.markdown('<p class="mdf-ra-vazio">Nenhum produto neste filtro.</p>', unsafe_allow_html=True)
     else:
         chave_pagina = f"pagina_resultado_acao::{ciclo_selecionado}"
         pagina_atual, total_paginas = _pagina_atual_paginacao(
-            chave_pagina, len(tabela), _TAMANHO_PAGINA_LISTA, chave_reset=(grupo, situacao),
+            chave_pagina, len(tabela), _TAMANHO_PAGINA_LISTA, chave_reset=(grupo, situacao, busca, ordem),
         )
         pagina = _fatia_pagina(tabela, pagina_atual, _TAMANHO_PAGINA_LISTA)
         st.markdown(resultado_tela.tabela_html(pagina), unsafe_allow_html=True)
@@ -456,7 +467,8 @@ def _renderizar_resultado_acao(
         c_rodape, c_exportar = st.columns([0.8, 0.2], vertical_alignment="center")
         with c_rodape:
             st.markdown(
-                f'<p class="mdf-ra-apoio">Mostrando {len(pagina)} de {len(tabela)}, do maior para o menor impacto.</p>',
+                f'<p class="mdf-ra-apoio">Mostrando {len(pagina)} de {len(tabela)}, '
+                f'{resultado_tela.DESCRICAO_ORDEM[ordem]}.</p>',
                 unsafe_allow_html=True,
             )
         with c_exportar:
@@ -953,9 +965,15 @@ def pagina_upload() -> None:
             if ciclo_destino:
                 arquivos_existentes_destino = ciclo_destino.get("arquivos", {})
 
+        mes_e_o_atual = ano_mes_destino == mes_de_hoje
         chaves_arquivos = selecao_loja.arquivos_do_upload(
-            list(_ROTULOS_ARQUIVOS_UPLOAD), arquivos_existentes_destino is not None
+            list(_ROTULOS_ARQUIVOS_UPLOAD), arquivos_existentes_destino is not None, mes_e_o_atual
         )
+        if loja_destino and not mes_e_o_atual:
+            st.caption(
+                f"Foto Antes e Foto Depois só podem ser enviadas no mês atual "
+                f"({styles.mes_legivel(mes_de_hoje)})."
+            )
         col_esq, col_dir = st.columns(2)
         colunas_alternadas = [col_esq if i % 2 == 0 else col_dir for i in range(len(chaves_arquivos))]
         arquivos_selecionados = {}
@@ -1690,6 +1708,56 @@ def _barra_abas_analise(sub_pagina_ativa: str) -> None:
     st.session_state["_analise_ultima_subpagina"] = [p for r, p in abas if r == sub_pagina_ativa][0].url_path
 
 
+def _salvar_ajuste_mix(loja: str, consultor: str, ciclo_selecionado: str, chave_estado: str) -> bool:
+    """Grava as quantidades da tela e passa a usá-las como referência do último
+    salvamento. Em caso de falha, mostra o erro e devolve False."""
+    quantidades = st.session_state[chave_estado]
+    salvo_em = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    payload = {
+        "loja": loja,
+        "consultor": consultor or None,
+        "ciclo": ciclo_selecionado,
+        "salvo_em": salvo_em,
+        "produtos": [
+            {
+                "ean": chave if str(chave).isdigit() and len(str(chave)) >= config.EAN_MIN_DIGITOS else None,
+                "ean_original": chave,
+                "quantidade": int(qtd),
+            }
+            for chave, qtd in quantidades.items()
+            if qtd and qtd > 0
+        ],
+    }
+    conteudo_json = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    try:
+        storage.escrever_arquivo_bytes(f"{ciclo_selecionado}/ajuste_mix.json", conteudo_json)
+    except StorageError as e:
+        st.error(f"Falha ao salvar: {e}")
+        return False
+    st.session_state[f"{chave_estado}::salvo"] = {
+        "quantidades": dict(quantidades), "tem_salvo": True, "salvo_em": salvo_em,
+    }
+    st.session_state["_ajuste_acabou_de_salvar"] = True
+    return True
+
+
+def _chave_campo_qtd(chave_estado: str, chave_produto) -> str:
+    """Nome do campo de quantidade. Inclui a "geração", que muda ao descartar:
+    o navegador guarda o último número digitado em cada campo, e só um campo
+    com nome novo volta a mostrar o valor salvo."""
+    geracao = st.session_state.get(f"{chave_estado}::geracao", 0)
+    return f"qtd::{chave_estado}::{geracao}::{chave_produto}"
+
+
+def _descartar_ajuste(chave_estado: str) -> None:
+    """Volta para o último salvamento."""
+    st.session_state[chave_estado] = dict(st.session_state[f"{chave_estado}::salvo"]["quantidades"])
+    prefixo = f"qtd::{chave_estado}::"
+    for chave in [c for c in st.session_state if isinstance(c, str) and c.startswith(prefixo)]:
+        del st.session_state[chave]
+    st.session_state[f"{chave_estado}::geracao"] = st.session_state.get(f"{chave_estado}::geracao", 0) + 1
+
+
 def pagina_ajuste_mix() -> None:
     ctx = _contexto_analise()
     if ctx is None:
@@ -1706,8 +1774,12 @@ def pagina_ajuste_mix() -> None:
         st.error(erro_dados)
     else:
         chave_estado = f"ajuste_mix::{loja}::{ciclo_selecionado}"
+        chave_salvo = f"{chave_estado}::salvo"
 
-        if chave_estado not in st.session_state:
+        if st.session_state.pop("_ajuste_acabou_de_salvar", False):
+            st.toast("Ajuste de mix salvo.", icon="✅")
+
+        if chave_estado not in st.session_state or chave_salvo not in st.session_state:
             # Inicializa o estado editável (1a vez que esta loja/ciclo é aberta
             # nesta sessão) a partir do ajuste salvo ou, sem ele, do cálculo
             # automático. Se a leitura falhar, a tela para aqui: abrir com o
@@ -1723,7 +1795,15 @@ def pagina_ajuste_mix() -> None:
                     "O ajuste de mix salvo desta loja está corrompido e não pôde ser lido. "
                     "A tela mostra a sugestão automática; ao salvar, ele será substituído."
                 )
-            st.session_state[chave_estado] = dl.quantidades_iniciais_ajuste(tabela_base, ajuste_salvo)
+            iniciais = dl.quantidades_iniciais_ajuste(tabela_base, ajuste_salvo)
+            # Sessão aberta antes desta versão já tem as quantidades editadas:
+            # elas ficam, e só a referência do último salvamento é criada.
+            st.session_state.setdefault(chave_estado, iniciais)
+            st.session_state[chave_salvo] = {
+                "quantidades": dict(iniciais),
+                "tem_salvo": ajuste_salvo is not None,
+                "salvo_em": (ajuste_salvo or {}).get("salvo_em"),
+            }
 
         quantidades_editadas = st.session_state[chave_estado]
 
@@ -1734,7 +1814,7 @@ def pagina_ajuste_mix() -> None:
         # renderização (mais abaixo) rodar.
         for _, row in tabela_base.iterrows():
             chave_produto = row["chave_produto"]
-            chave_widget = f"qtd::{chave_estado}::{chave_produto}"
+            chave_widget = _chave_campo_qtd(chave_estado, chave_produto)
             if chave_widget in st.session_state:
                 quantidades_editadas[chave_produto] = st.session_state[chave_widget]
 
@@ -1758,7 +1838,29 @@ def pagina_ajuste_mix() -> None:
                 for _, row in produtos_nao_localizados.iterrows():
                     st.markdown(f"- **{row['produto']}** — módulo {row['modulo']}, posição {row['posicao']}, EAN cadastrado: `{row['ean_original']}`")
 
-        c_busca_texto, c_busca_status, c_botao_salvar = st.columns([0.42, 0.38, 0.20], gap="small")
+        salvo = st.session_state[chave_salvo]
+        alteracoes = ajuste_estado.contar_alteracoes(quantidades_editadas, salvo["quantidades"])
+        pendente = alteracoes > 0 or not salvo["tem_salvo"]
+        with st.container(key="mdf_faixa_ajuste_pendente" if pendente else "mdf_faixa_ajuste"):
+            c_texto, c_descartar, c_salvar = st.columns([0.6, 0.2, 0.2], vertical_alignment="center")
+            c_texto.markdown(
+                f'<p class="mdf-faixa-ajuste-texto">'
+                f'{ajuste_estado.texto_da_faixa(alteracoes, salvo["tem_salvo"], salvo["salvo_em"])}</p>',
+                unsafe_allow_html=True,
+            )
+            if salvo["tem_salvo"] and alteracoes:
+                c_descartar.button(
+                    "Descartar", key="ajuste_descartar", width="stretch",
+                    on_click=_descartar_ajuste, args=(chave_estado,),
+                )
+            if c_salvar.button("💾 Salvar", type="primary", width="stretch", key="ajuste_salvar"):
+                if qtd_preenchidos < config.QTD_MINIMA_AJUSTE_MIX:
+                    st.session_state["_confirmar_salvar_poucos"] = True
+                else:
+                    st.session_state["_confirmar_salvar_poucos"] = False
+                    st.session_state["_pronto_para_salvar"] = True
+
+        c_busca_texto, c_busca_status = st.columns([0.55, 0.45], gap="small")
         with c_busca_texto:
             termo_busca = st.text_input(
                 "Buscar",
@@ -1771,13 +1873,6 @@ def pagina_ajuste_mix() -> None:
                 config.OPCOES_FILTRO_STATUS,
                 label_visibility="collapsed",
             )
-        with c_botao_salvar:
-            if st.button("💾 Salvar", type="primary", width="stretch"):
-                if qtd_preenchidos < config.QTD_MINIMA_AJUSTE_MIX:
-                    st.session_state["_confirmar_salvar_poucos"] = True
-                else:
-                    st.session_state["_confirmar_salvar_poucos"] = False
-                    st.session_state["_pronto_para_salvar"] = True
 
         mask_busca = tabela_base.apply(
             lambda row: styles.corresponde_busca(termo_busca, row["produto"], row["ean_original"], row["posicao"]),
@@ -1801,28 +1896,10 @@ def pagina_ajuste_mix() -> None:
                 st.session_state["_confirmar_salvar_poucos"] = False
 
         if st.session_state.get("_pronto_para_salvar"):
-            payload = {
-                "loja": loja,
-                "consultor": consultor or None,
-                "ciclo": ciclo_selecionado,
-                "produtos": [
-                    {
-                        "ean": chave if str(chave).isdigit() and len(str(chave)) >= config.EAN_MIN_DIGITOS else None,
-                        "ean_original": chave,
-                        "quantidade": int(qtd),
-                    }
-                    for chave, qtd in quantidades_editadas.items()
-                    if qtd and qtd > 0
-                ],
-            }
-            conteudo_json = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
-            caminho_salvar = f"{ciclo_selecionado}/ajuste_mix.json"
-            try:
-                storage.escrever_arquivo_bytes(caminho_salvar, conteudo_json)
-                st.toast("Ajuste de mix salvo.", icon="✅")
-            except StorageError as e:
-                st.error(f"Falha ao salvar: {e}")
             st.session_state["_pronto_para_salvar"] = False
+            if _salvar_ajuste_mix(loja, consultor, ciclo_selecionado, chave_estado):
+                # Refaz a tela para a faixa mostrar "Tudo salvo".
+                st.rerun()
 
         # ---- Paginação da lista (ver bloco "Paginação de listas longas"
         # acima) — só afeta QUAIS produtos ganham um st.number_input
@@ -1830,7 +1907,7 @@ def pagina_ajuste_mix() -> None:
         # o payload salvo) continua sendo sincronizado a partir de TODA a
         # tabela_base logo acima, então trocar de página nunca perde a
         # quantidade digitada numa página diferente (a key do widget,
-        # "qtd::{chave_estado}::{chave_produto}", é estável por produto,
+        # _chave_campo_qtd(chave_estado, chave_produto), é estável por produto,
         # não por posição de renderização — o valor fica em
         # st.session_state mesmo quando o widget não é desenhado nesta
         # execução). O aviso de EAN não localizado e o botão Salvar acima
@@ -1882,7 +1959,7 @@ def pagina_ajuste_mix() -> None:
                                 min_value=piso,
                                 value=int(valor_atual) if pd.notna(valor_atual) else 0,
                                 step=1,
-                                key=f"qtd::{chave_estado}::{chave_produto}",
+                                key=_chave_campo_qtd(chave_estado, chave_produto),
                                 label_visibility="collapsed",
                             )
                         with col_alerta:
@@ -1922,6 +1999,31 @@ def pagina_sugestao_gc() -> None:
                 "'Ajuste de mix' e salve primeiro."
             )
         else:
+            if st.session_state.pop("_ajuste_acabou_de_salvar", False):
+                st.toast("Ajuste de mix salvo.", icon="✅")
+            # Alterações feitas no Ajuste de mix e ainda não salvas: o PDF sai
+            # com o último ajuste salvo, diferente do que a pessoa vê lá.
+            chave_estado = f"ajuste_mix::{loja}::{ciclo_selecionado}"
+            salvo = st.session_state.get(f"{chave_estado}::salvo")
+            if salvo and chave_estado in st.session_state:
+                quantidades = st.session_state[chave_estado]
+                alteracoes = ajuste_estado.contar_alteracoes(quantidades, salvo["quantidades"])
+                if alteracoes:
+                    with st.container(key="mdf_faixa_ajuste_pendente"):
+                        c_aviso, c_acao = st.columns([0.75, 0.25], vertical_alignment="center")
+                        c_aviso.markdown(
+                            f'<p class="mdf-faixa-ajuste-texto">{ajuste_estado.texto_aviso_gc(alteracoes)}</p>',
+                            unsafe_allow_html=True,
+                        )
+                        preenchidos = sum(1 for v in quantidades.values() if v and v > 0)
+                        if preenchidos >= config.QTD_MINIMA_AJUSTE_MIX:
+                            if c_acao.button("Salvar agora", key="gc_salvar_agora", type="primary", width="stretch"):
+                                if _salvar_ajuste_mix(loja, consultor, ciclo_selecionado, chave_estado):
+                                    st.rerun()
+                        elif c_acao.button("Revisar no Ajuste de mix", key="gc_revisar_ajuste", width="stretch"):
+                            # Poucos produtos: a confirmação fica no Ajuste de mix.
+                            st.switch_page(PAGINA_AJUSTE_MIX)
+
             _gc_t1 = time.perf_counter()  # >>> DIAGNOSTICO
             tabela_gc = dl.montar_tabela_sugestao_gc(mapa_df, ajuste_salvo)
             print(f"[GC-TEMPO] 2 montar_tabela_sugestao_gc: {time.perf_counter() - _gc_t1:.2f}s", flush=True)  # >>> DIAGNOSTICO
