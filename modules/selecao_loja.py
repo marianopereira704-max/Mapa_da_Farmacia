@@ -55,9 +55,17 @@ def meses_da_barra(inventario: dict, mes_de_hoje: str) -> list[MesDaBarra]:
     return [MesDaBarra(mes, contagem[mes], mes == mes_de_hoje) for mes in sorted(contagem, reverse=True)]
 
 
-def lojas_do_mes(inventario: dict, mes: str) -> list[str]:
+def _tem_lancamento(ciclos: dict, mes: str | None) -> bool:
+    """`mes` None = qualquer mês (modo "Todos" da lista)."""
+    if mes is None:
+        return any(_FORMATO_MES.fullmatch(m) for m in ciclos)
+    return mes in ciclos
+
+
+def lojas_do_mes(inventario: dict, mes: str | None) -> list[str]:
+    """Lojas com arquivos no mês. `mes` None: lojas com arquivos em qualquer mês."""
     return sorted(
-        (codigo for codigo, ciclos in inventario.items() if _e_loja(codigo) and mes in ciclos),
+        (codigo for codigo, ciclos in inventario.items() if _e_loja(codigo) and _tem_lancamento(ciclos, mes)),
         key=_ordem_codigo,
     )
 
@@ -117,6 +125,10 @@ def buscar_lojas(texto: str, codigos: list[str], cadastro: dict) -> list[str]:
     return [codigo for codigo in codigos if _bate(codigo)]
 
 
+_MESES_EXTENSO = (
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+)
 _MESES_CURTOS = ("Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez")
 
 
@@ -127,8 +139,28 @@ def mes_curto(mes: str) -> str:
     return f"{_MESES_CURTOS[int(mes[5:]) - 1]}/{mes[2:4]}"
 
 
+def mes_por_extenso(mes: str) -> str:
+    """"2026-11" vira "Novembro" (sem o ano). Texto fora do formato volta como veio."""
+    if not _FORMATO_MES.fullmatch(mes) or not 1 <= int(mes[5:]) <= 12:
+        return mes
+    return _MESES_EXTENSO[int(mes[5:]) - 1]
+
+
+def meses_por_ano(meses: list[str]) -> list[tuple[str, list[str]]]:
+    """Agrupa meses AAAA-MM por ano, do mais novo para o mais antigo, para os
+    cards do pop-up "Selecione o mês"."""
+    grupos: dict[str, list[str]] = {}
+    for mes in sorted(meses, reverse=True):
+        grupos.setdefault(mes[:4], []).append(mes)
+    return list(grupos.items())
+
+
 def rotulo_lojas(total: int) -> str:
     return "1 loja" if total == 1 else f"{total} lojas"
+
+
+def rotulo_todos_da_barra(inventario: dict) -> str:
+    return f"Todos · {rotulo_lojas(len(lojas_do_mes(inventario, None)))}"
 
 
 def rotulo_mes_da_barra(item: MesDaBarra) -> str:
@@ -147,17 +179,18 @@ class LinhaLoja:
     razao_social: str
     consultor: str
     tem_arquivos: bool
+    ultimo_mes: str | None = None  # mês com arquivos mais recente; None = nenhum
 
 
 def lojas_da_lista(
     inventario: dict,
-    mes: str,
+    mes: str | None,
     texto: str,
     cadastro: dict,
     consultor: str | None = None,
     supervisora: str | None = None,
 ) -> list[LinhaLoja]:
-    """Sem busca: lojas com arquivos no mês. Com busca: também as ativas do
+    """Sem busca: lojas com arquivos no mês (`mes` None: em qualquer mês). Com busca: também as ativas do
     cadastro sem arquivos, para poderem fazer o Upload. `cadastro` vazio (API
     fora do ar) deixa só código, e os filtros não acham nada."""
     com_arquivos = set(lojas_do_mes(inventario, mes))
@@ -178,12 +211,13 @@ def lojas_da_lista(
             razao_social=(loja and (loja.razao_social or loja.nome_fantasia)) or "—",
             consultor=(loja and loja.consultor) or "—",
             tem_arquivos=codigo in com_arquivos,
+            ultimo_mes=next(iter(meses_da_loja(inventario, codigo)), None),
         ))
     return linhas
 
 
-def opcoes_de_filtro(inventario: dict, mes: str, cadastro: dict) -> tuple[list[str], list[str]]:
-    """(consultores, supervisoras) das lojas com arquivos no mês."""
+def opcoes_de_filtro(inventario: dict, mes: str | None, cadastro: dict) -> tuple[list[str], list[str]]:
+    """(consultores, supervisoras) das lojas com arquivos no mês (`mes` None: em qualquer mês)."""
     lojas = [cadastro[c] for c in lojas_do_mes(inventario, mes) if c in cadastro]
     return (
         sorted({loja.consultor for loja in lojas if loja.consultor}),

@@ -439,7 +439,7 @@ def aplicar_estilo() -> None:
         [class*="st-key-mdf_linha_loja_"]:hover {{ background: #F7F8FA; }}
         /* O Markdown do Streamlit tem margem negativa embaixo, que deixa o
         texto fora do centro em relação aos botões da mesma linha. */
-        [data-testid="stMarkdownContainer"]:has(> .mdf-loja-cod, > .mdf-loja-razao, > .mdf-loja-consultor, > .mdf-lista-apoio, > .mdf-barra-mes-rotulo, > .mdf-paginacao-info, > .mdf-faixa-ajuste-texto) {{
+        [data-testid="stMarkdownContainer"]:has(> .mdf-loja-cod, > .mdf-loja-razao, > .mdf-loja-ultimo,> .mdf-loja-consultor, > .mdf-lista-apoio, > .mdf-barra-mes-rotulo, > .mdf-paginacao-info, > .mdf-faixa-ajuste-texto) {{
             margin-bottom: 0 !important;
         }}
         .mdf-loja-cod {{ font-weight: 700; color: {config.COR_NAVY}; margin: 0; }}
@@ -447,6 +447,72 @@ def aplicar_estilo() -> None:
         .mdf-loja-consultor {{ color: #4B5563; margin: 0; overflow-wrap: anywhere; }}
         .mdf-lista-apoio {{ color: #4B5563; margin: 0; }}
         .mdf-lista-vazia {{ color: #4B5563; margin: 0; padding: 32px 16px; text-align: center; }}
+        .mdf-loja-ultimo {{ margin: 0; color: #1F2937; font-weight: 600; font-size: 14px; white-space: nowrap; }}
+        .mdf-loja-ultimo-rotulo {{
+            display: block; color: #7A8699; font-weight: 500; font-size: 11px;
+            text-transform: uppercase; letter-spacing: .04em; line-height: 1.2;
+        }}
+
+        /* ---- Selecionar Loja: pop-up "Selecione o mês" ---- */
+        .mdf-dialog-mes-loja {{ margin: -8px 0 4px; color: #7A8699; font-size: 14px; overflow-wrap: anywhere; }}
+        .mdf-dialog-mes-ano {{
+            margin: 10px 0 2px; color: {config.COR_NAVY}; font-weight: 700; font-size: 13px;
+            letter-spacing: .08em; border-bottom: 1px solid #E4E7EB; padding-bottom: 4px;
+        }}
+        [data-testid="stMarkdownContainer"]:has(> .mdf-dialog-mes-loja, > .mdf-dialog-mes-ano, > .mdf-card-mes) {{
+            margin-bottom: 0 !important;
+        }}
+        [class*="st-key-mdf_card_mes_"] {{
+            position: relative;
+            background: #F7F8FA;
+            border: 1px solid #E4E7EB;
+            border-radius: 12px;
+            padding: 12px 14px;
+            min-height: 96px;
+            justify-content: center;
+            transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+        }}
+        [class*="st-key-mdf_card_mes_"]:hover {{
+            border-color: {config.COR_NAVY};
+            box-shadow: 0 4px 14px rgba(23, 55, 94, .12);
+            transform: translateY(-1px);
+        }}
+        [class*="st-key-mdf_card_mes_"]:has(button:focus-visible) {{
+            outline: 2px solid #4A6E90; outline-offset: 2px;
+        }}
+        [class*="st-key-mdf_card_mes_atual_"] {{
+            background: {config.COR_NAVY};
+            border-color: {config.COR_NAVY};
+        }}
+        [class*="st-key-mdf_card_mes_atual_"]:hover {{ box-shadow: 0 4px 16px rgba(141, 198, 63, .35); }}
+        /* Botão invisível cobrindo o card inteiro: o card é o alvo do clique. */
+        [class*="st-key-mdf_card_btn_"] {{ position: absolute; inset: 0; z-index: 2; margin: 0 !important; }}
+        [class*="st-key-mdf_card_btn_"] button {{
+            width: 100% !important; height: 100% !important; opacity: 0; cursor: pointer;
+        }}
+        .mdf-card-mes {{ display: flex; flex-direction: column; gap: 2px; }}
+        .mdf-card-mes-topo {{ display: flex; align-items: center; justify-content: space-between; gap: 6px; }}
+        .mdf-card-mes-nome {{ font-size: 17px; font-weight: 700; color: {config.COR_NAVY}; line-height: 1.2; }}
+        .mdf-card-mes-ano {{ font-size: 12px; color: #7A8699; }}
+        .mdf-card-mes-selo {{
+            background: #8DC63F; color: #FFFFFF; border-radius: 999px;
+            padding: 1px 8px; font-size: 11px; font-weight: 700;
+        }}
+        .mdf-card-mes-arquivos {{
+            display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;
+            font-size: 12px; font-weight: 600; color: #27500A; align-self: flex-start;
+        }}
+        .mdf-card-mes-arquivos svg {{ color: #639922; }}
+        .mdf-card-mes-arquivos.incompleto {{
+            background: #FAEEDA; color: #854F0B; border-radius: 999px; padding: 1px 8px;
+        }}
+        .mdf-card-mes-arquivos.incompleto svg {{ color: #854F0B; }}
+        [class*="st-key-mdf_card_mes_atual_"] .mdf-card-mes-nome {{ color: #FFFFFF; }}
+        [class*="st-key-mdf_card_mes_atual_"] .mdf-card-mes-ano {{ color: #C9D6E5; }}
+        [class*="st-key-mdf_card_mes_atual_"] .mdf-card-mes-arquivos {{ color: #FFFFFF; }}
+        [class*="st-key-mdf_card_mes_atual_"] .mdf-card-mes-arquivos svg {{ color: #8DC63F; }}
+        [class*="st-key-mdf_card_mes_atual_"] .mdf-card-mes-arquivos.incompleto {{ color: #854F0B; }}
+        [class*="st-key-mdf_card_mes_atual_"] .mdf-card-mes-arquivos.incompleto svg {{ color: #854F0B; }}
         [class*="st-key-analise_loja_"] button,
         [class*="st-key-upload_loja_"] button {{
             min-height: 32px !important;

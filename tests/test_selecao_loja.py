@@ -21,12 +21,15 @@ from modules.selecao_loja import (
     mes_atual,
     mes_curto,
     mes_de_destino,
+    mes_por_extenso,
     meses_da_barra,
     meses_da_loja,
+    meses_por_ano,
     opcoes_de_filtro,
     paginar,
     rotulo_da_loja,
     rotulo_mes_da_barra,
+    rotulo_todos_da_barra,
     texto_de_destino,
 )
 
@@ -253,6 +256,54 @@ def test_api_fora_do_ar_lista_so_codigo():
 def test_opcoes_de_filtro_vem_das_lojas_do_mes():
     assert opcoes_de_filtro(LISTA_INVENTARIO, "2026-11", LISTA_CADASTRO) == (["Ana", "Caio"], ["Bia"])
     assert opcoes_de_filtro({}, "2026-11", LISTA_CADASTRO) == ([], [])
+
+
+# ---- Modo "Todos" (lista sem filtro de mês) ----
+
+def test_todos_lista_lojas_com_arquivos_em_qualquer_mes():
+    assert lojas_do_mes(INVENTARIO, None) == ["9", "10", "200"]
+
+
+def test_todos_sem_busca_traz_lojas_de_todos_os_meses_com_o_ultimo_lancamento():
+    linhas = lojas_da_lista(LISTA_INVENTARIO, None, "", LISTA_CADASTRO)
+    assert [(l.codigo, l.ultimo_mes) for l in linhas] == [
+        ("9", "2026-11"), ("10", "2026-11"), ("20", "2026-10"), ("77", "2026-11"),
+    ]
+
+
+def test_todos_com_busca_loja_sem_arquivos_nao_tem_ultimo_lancamento():
+    linhas = lojas_da_lista(LISTA_INVENTARIO, None, "alfa", LISTA_CADASTRO)
+    assert [(l.codigo, l.tem_arquivos, l.ultimo_mes) for l in linhas] == [
+        ("9", True, "2026-11"), ("20", True, "2026-10"), ("30", False, None),
+    ]
+
+
+def test_ultimo_lancamento_e_o_mes_mais_novo_da_loja():
+    linha = lojas_da_lista(INVENTARIO, None, "10", {})[0]
+    assert linha.ultimo_mes == "2026-10"
+
+
+def test_opcoes_de_filtro_no_todos_vem_de_todos_os_meses():
+    assert opcoes_de_filtro(LISTA_INVENTARIO, None, LISTA_CADASTRO) == (["Ana", "Caio"], ["Bia", "Dora"])
+
+
+def test_rotulo_todos_da_barra_conta_lojas_sem_codigos_de_teste():
+    assert rotulo_todos_da_barra(INVENTARIO) == "Todos · 3 lojas"
+    assert rotulo_todos_da_barra({}) == "Todos · 0 lojas"
+
+
+@pytest.mark.parametrize("mes, esperado", [
+    ("2026-11", "Novembro"), ("2026-03", "Março"), ("2026-13", "2026-13"), ("pasta_solta", "pasta_solta"),
+])
+def test_mes_por_extenso(mes, esperado):
+    assert mes_por_extenso(mes) == esperado
+
+
+def test_meses_por_ano_do_mais_novo_para_o_mais_antigo():
+    assert meses_por_ano(["2025-12", "2026-02", "2025-11", "2026-01"]) == [
+        ("2026", ["2026-02", "2026-01"]), ("2025", ["2025-12", "2025-11"]),
+    ]
+    assert meses_por_ano([]) == []
 
 
 # ---- Cabeçalho da Análise ----

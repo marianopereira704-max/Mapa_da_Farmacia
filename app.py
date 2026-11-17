@@ -29,6 +29,7 @@ from __future__ import annotations
 import html
 import io
 import json
+import math
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -1288,7 +1289,6 @@ def _selecionar_ciclo(loja: str, mes: str, info_ciclo: dict) -> None:
     st.session_state["loja_atual_analise"] = loja
     st.session_state["ciclo_atual_analise"] = f"{loja}/{mes}"
     st.session_state["metadata_atual_analise"] = info_ciclo["metadata"]
-    st.session_state["mes_selecionado"] = mes
     # Marca esta entrada na Análise como uma "nova visita" pro aviso de Modelo
     # ausente (aba_gc): sem isso o aviso, uma vez fechado, nunca mais
     # reapareceria pra este ciclo mesmo que o consultor saia e volte.
@@ -1301,8 +1301,10 @@ def _abrir_analise(loja: str, mes: str, info_ciclo: dict) -> None:
     st.switch_page(_pagina_analise_para_retomar())
 
 
-def _escolher_mes(mes: str) -> None:
-    st.session_state["mes_selecionado"] = mes
+def _escolher_mes(mes: str | None) -> None:
+    """Filtro da barra de meses. None = "Todos". Fica separado do mês em
+    análise: voltar da análise não muda o filtro que o usuário deixou."""
+    st.session_state["filtro_mes_lojas"] = mes
     st.session_state["busca_loja"] = ""
     st.session_state.pop("w_busca_loja", None)
 
@@ -1324,9 +1326,14 @@ def _campo_guardado(chave: str, padrao: str, opcoes: list[str] | None = None) ->
     return valor
 
 
-def _barra_de_meses(barra: list, mes_selecionado: str) -> None:
+def _barra_de_meses(barra: list, mes_selecionado: str | None, rotulo_todos: str) -> None:
     with st.container(key="mdf_barra_meses", horizontal=True, vertical_alignment="center", gap="small"):
         st.markdown('<p class="mdf-barra-mes-rotulo">Mês</p>', unsafe_allow_html=True, width="content")
+        st.button(
+            rotulo_todos, key="barra_mes_todos",
+            type="primary" if mes_selecionado is None else "secondary",
+            on_click=_escolher_mes, args=(None,),
+        )
         for item in barra:
             st.button(
                 selecao_loja.rotulo_mes_da_barra(item),
@@ -1337,24 +1344,94 @@ def _barra_de_meses(barra: list, mes_selecionado: str) -> None:
             )
 
 
-def _linha_da_lista(linha: selecao_loja.LinhaLoja, mes: str, ciclos_do_mes: dict) -> None:
-    with st.container(key=f"mdf_linha_loja_{linha.codigo}"):
-        c_cod, c_razao, c_consultor, c_analise, c_upload = st.columns(
-            [0.8, 2.6, 1.5, 1.4, 1], vertical_alignment="center"
+_SVG_CHECK_CARD = (
+    '<svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">'
+    '<path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2.2" '
+    'stroke-linecap="round" stroke-linejoin="round"/></svg>'
+)
+_SVG_ALERTA_CARD = (
+    '<svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">'
+    '<circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/>'
+    '<path d="M8 4.6v4M8 11.2v.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+)
+
+
+def _card_do_mes(loja: str, mes: str, info_ciclo: dict, mes_de_hoje: str) -> None:
+    """Card clicável do pop-up: o botão fica invisível por cima do card inteiro
+    (CSS .st-key-mdf_card_btn_*), então o clique em qualquer ponto abre a análise."""
+    situacao = selecao_loja.arquivos_do_mes(_ROTULOS_ARQUIVOS_UPLOAD, info_ciclo.get("arquivos", {}))
+    enviados = sum(arquivo.presente for arquivo in situacao)
+    completo = enviados == len(situacao)
+    atual = mes == mes_de_hoje
+    selo = '<span class="mdf-card-mes-selo">Atual</span>' if atual else ""
+    classe_arquivos = "mdf-card-mes-arquivos" + ("" if completo else " incompleto")
+    icone = _SVG_CHECK_CARD if completo else _SVG_ALERTA_CARD
+    prefixo_chave = "mdf_card_mes_atual_" if atual else "mdf_card_mes_"
+    with st.container(key=f"{prefixo_chave}{mes}"):
+        st.markdown(
+            f'<div class="mdf-card-mes">'
+            f'<div class="mdf-card-mes-topo"><span class="mdf-card-mes-nome">'
+            f'{selecao_loja.mes_por_extenso(mes)}</span>{selo}</div>'
+            f'<span class="mdf-card-mes-ano">{mes[:4]}</span>'
+            f'<span class="{classe_arquivos}">{icone}{enviados} de {len(situacao)} arquivos</span>'
+            f'</div>',
+            unsafe_allow_html=True,
         )
+        if st.button(f"Abrir {styles.mes_legivel(mes)}", key=f"mdf_card_btn_{mes}", width="stretch"):
+            _abrir_analise(loja, mes, info_ciclo)
+
+
+@st.dialog("Selecione o mês", width="small")
+def _dialog_selecionar_mes(loja: str, rotulo_loja: str, ciclos: dict, mes_de_hoje: str) -> None:
+    st.markdown(f'<p class="mdf-dialog-mes-loja">Loja {html.escape(rotulo_loja)}</p>', unsafe_allow_html=True)
+    grupos = selecao_loja.meses_por_ano(selecao_loja.meses_da_loja({loja: ciclos}, loja))
+    linhas_de_cards = sum(math.ceil(len(meses) / 2) for _, meses in grupos)
+    # Rolagem só quando não cabe: com poucos meses o pop-up fica do tamanho do conteúdo.
+    altura = 420 if linhas_de_cards + len(grupos) > 4 else "content"
+    with st.container(height=altura, key="mdf_dialog_meses", border=False):
+        for ano, meses in grupos:
+            st.markdown(f'<p class="mdf-dialog-mes-ano">{ano}</p>', unsafe_allow_html=True)
+            for primeiro in range(0, len(meses), 2):
+                colunas = st.columns(2, gap="small")
+                for coluna, mes in zip(colunas, meses[primeiro:primeiro + 2]):
+                    with coluna:
+                        _card_do_mes(loja, mes, ciclos[mes], mes_de_hoje)
+
+
+def _linha_da_lista(
+    linha: selecao_loja.LinhaLoja, mes: str | None, inventario_atual: dict, cadastro: dict, mes_de_hoje: str,
+) -> None:
+    """`mes` None (modo "Todos"): "Ir para análise" abre o pop-up de meses e o
+    Upload vai para o mês atual. Com mês filtrado, os dois usam esse mês."""
+    with st.container(key=f"mdf_linha_loja_{linha.codigo}"):
+        c_cod, c_razao, c_consultor, c_ultimo, c_analise, c_upload = st.columns(
+            [0.8, 2.4, 1.4, 1.1, 1.4, 1], vertical_alignment="center"
+        )
+        ultimo = selecao_loja.mes_curto(linha.ultimo_mes) if linha.ultimo_mes else "—"
         for coluna, classe, valor in (
             (c_cod, "mdf-loja-cod", linha.codigo),
             (c_razao, "mdf-loja-razao", linha.razao_social),
             (c_consultor, "mdf-loja-consultor", linha.consultor),
         ):
             coluna.markdown(f'<p class="{classe}">{html.escape(valor)}</p>', unsafe_allow_html=True)
+        c_ultimo.markdown(
+            f'<p class="mdf-loja-ultimo" title="Último lançamento">'
+            f'<span class="mdf-loja-ultimo-rotulo">Último</span>{html.escape(ultimo)}</p>',
+            unsafe_allow_html=True,
+        )
         if linha.tem_arquivos and c_analise.button(
             "Ir para análise", key=f"analise_loja_{linha.codigo}", width="stretch",
             icon=":material/arrow_forward:", icon_position="right",
         ):
-            _abrir_analise(linha.codigo, mes, ciclos_do_mes[linha.codigo])
+            ciclos = inventario_atual[linha.codigo]
+            if mes is None:
+                _dialog_selecionar_mes(
+                    linha.codigo, selecao_loja.rotulo_da_loja(linha.codigo, cadastro), ciclos, mes_de_hoje,
+                )
+            else:
+                _abrir_analise(linha.codigo, mes, ciclos[mes])
         if c_upload.button("Upload", key=f"upload_loja_{linha.codigo}", width="stretch", icon=":material/upload:"):
-            _abrir_upload(linha.codigo, mes)
+            _abrir_upload(linha.codigo, mes or mes_de_hoje)
 
 
 def _paginacao_lojas(pagina: selecao_loja.Pagina) -> None:
@@ -1404,12 +1481,13 @@ def pagina_selecionar_loja() -> None:
 
     mes_de_hoje = selecao_loja.mes_atual()
     barra = selecao_loja.meses_da_barra(inventario_atual, mes_de_hoje)
-    mes = st.session_state.get("mes_selecionado", mes_de_hoje)
+    # None = "Todos" (padrão): lista as lojas com lançamento em qualquer mês.
+    mes = st.session_state.get("filtro_mes_lojas")
     if mes not in {item.mes for item in barra}:
-        mes = mes_de_hoje
-    st.session_state["mes_selecionado"] = mes
+        mes = None
+    st.session_state["filtro_mes_lojas"] = mes
 
-    _barra_de_meses(barra, mes)
+    _barra_de_meses(barra, mes, selecao_loja.rotulo_todos_da_barra(inventario_atual))
 
     _campo_guardado("busca_loja", "")
     texto_busca = st.text_input("Buscar loja", key="w_busca_loja", placeholder="Código ou razão social")
@@ -1446,11 +1524,17 @@ def pagina_selecionar_loja() -> None:
     buscando = bool(texto_busca.strip())
     if buscando:
         contagem = f"{selecao_loja.rotulo_lojas(len(linhas))} encontrada{'' if len(linhas) == 1 else 's'}"
+    elif mes is None:
+        contagem = f"{selecao_loja.rotulo_lojas(len(linhas))} com lançamentos"
     else:
         contagem = f"{selecao_loja.rotulo_lojas(len(linhas))} com arquivos em {selecao_loja.mes_curto(mes)}"
-    tem_arquivos_no_mes = any(item.mes == mes and item.lojas for item in barra)
+    tem_arquivos_no_mes = bool(selecao_loja.lojas_do_mes(inventario_atual, mes))
     if tem_arquivos_no_mes or buscando:
         c_contagem.markdown(f'<p class="mdf-lista-apoio">{contagem}</p>', unsafe_allow_html=True)
+    elif mes is None:
+        st.info("Nenhuma loja enviou arquivos ainda.")
+        st.markdown("Use a página **Upload** para enviar os primeiros arquivos.")
+        return
     else:
         st.info(f"Nenhuma loja enviou arquivos em {styles.mes_legivel(mes)}.")
         anterior = selecao_loja.mes_anterior_com_arquivos(barra, mes)
@@ -1469,17 +1553,17 @@ def pagina_selecionar_loja() -> None:
     )
     pagina = selecao_loja.paginar(linhas, numero_pagina)
 
-    ciclos_do_mes = {codigo: ciclos[mes] for codigo, ciclos in inventario_atual.items() if mes in ciclos}
     with st.container(border=True, key="mdf_lista_lojas"):
         if not pagina.itens:
             st.markdown('<p class="mdf-lista-vazia">Nenhuma loja encontrada.</p>', unsafe_allow_html=True)
         for linha in pagina.itens:
-            _linha_da_lista(linha, mes, ciclos_do_mes)
+            _linha_da_lista(linha, mes, inventario_atual, cadastro, mes_de_hoje)
 
     _paginacao_lojas(pagina)
     if not buscando and cadastro:
+        quando = "ainda" if mes is None else "neste mês"
         st.markdown(
-            '<p class="mdf-lista-apoio">Loja que ainda não enviou neste mês: busque pelo código para fazer o Upload.</p>',
+            f'<p class="mdf-lista-apoio">Loja que {quando} não enviou: busque pelo código para fazer o Upload.</p>',
             unsafe_allow_html=True,
         )
 
