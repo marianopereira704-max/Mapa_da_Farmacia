@@ -34,6 +34,25 @@ from dataclasses import dataclass
 import requests
 
 
+# Sufixos de família que não contam como sobrenome sozinhos: "JOÃO SILVA
+# FILHO" vira "JOÃO SILVA FILHO", e não "JOÃO FILHO".
+_SUFIXOS_NOME = {"FILHO", "FILHA", "JUNIOR", "JÚNIOR", "JR", "JR.", "NETO", "NETA", "SOBRINHO", "SOBRINHA"}
+
+
+def formatar_consultor(nome: str | None) -> str | None:
+    """Padrão do nome de consultor em todo o app: MAIÚSCULAS, só o primeiro
+    nome e o último sobrenome ("Maria da Silva Santos" -> "MARIA SANTOS").
+    Vazio volta None."""
+    partes = (nome or "").upper().split()
+    if not partes:
+        return None
+    if len(partes) <= 2:
+        return " ".join(partes)
+    if partes[-1] in _SUFIXOS_NOME:
+        return f"{partes[0]} {partes[-2]} {partes[-1]}"
+    return f"{partes[0]} {partes[-1]}"
+
+
 class LojasAPIError(Exception):
     """Erro genérico de acesso à API de lojas (configuração ausente, rede,
     autenticação, formato de resposta inesperado, etc.)."""
@@ -131,7 +150,7 @@ def obter_lojas(url: str, api_key: str, timeout: int = 15, apenas_ativas: bool =
         lojas.append(Loja(
             codigo=str(codigo).strip(),
             nome=_primeiro_valor(item, _CAMPOS_NOME),
-            consultor=_pessoa_do_setor(item, _SETOR_CONSULTOR),
+            consultor=formatar_consultor(_pessoa_do_setor(item, _SETOR_CONSULTOR)),
             supervisora=_pessoa_do_setor(item, _SETOR_SUPERVISORA),
             nome_fantasia=item.get("fantasyName") or None,
             razao_social=item.get("businessName") or None,

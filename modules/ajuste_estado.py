@@ -39,11 +39,13 @@ def texto_da_faixa(alteracoes: int, tem_salvo: bool, salvo_em: str | None) -> st
     if not tem_salvo:
         return "Ajuste ainda não salvo. A Sugestão de GC só aparece depois de salvar."
     quando = quando_salvou(salvo_em)
-    ultimo = f"Último salvamento em {quando}." if quando else "Ajuste salvo."
+    # Sem horário gravado (salvamento antigo) não há o que acrescentar:
+    # "Tudo salvo. Ajuste salvo." repetia a mesma informação.
+    ultimo = f" Último salvamento em {quando}." if quando else ""
     if alteracoes == 0:
-        return f"Tudo salvo. {ultimo}"
+        return f"Tudo salvo.{ultimo}"
     plural = "alteração não salva" if alteracoes == 1 else "alterações não salvas"
-    return f"{alteracoes} {plural}. {ultimo}"
+    return f"{alteracoes} {plural}.{ultimo}"
 
 
 def texto_aviso_gc(alteracoes: int) -> str:

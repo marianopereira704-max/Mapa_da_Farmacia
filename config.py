@@ -229,12 +229,33 @@ COR_AMBAR_BG = "#FAEEDA"
 COR_AMBAR_TEXTO = "#854F0B"
 COR_VERDE_BG = "#EAF3DE"
 COR_VERDE_TEXTO = "#27500A"
-COR_AZUL_BG = "#DCEAFB"
-COR_AZUL_TEXTO = "#1D4E89"
-COR_ROXO_BG = "#F0EBFA"
-COR_ROXO_TEXTO = "#5B3A9E"
+# Pares de status da identidade visual (fundo claro + texto escuro da mesma cor).
+COR_AZUL_BG = "#DCE9F7"
+COR_AZUL_TEXTO = "#123A63"
+COR_ROXO_BG = "#EEE8F7"
+COR_ROXO_TEXTO = "#4A2E7A"
 COR_CINZA_BG = "#EEF0F3"
 COR_CINZA_TEXTO = "#4B5563"
+
+# Texto: três níveis, e só estes três em todo o app.
+COR_TEXTO = "#1F2937"              # texto principal (também o textColor do tema)
+COR_TEXTO_SECUNDARIO = "#4B5563"   # apoio: contagens, consultor, legendas
+COR_TEXTO_MUTED = "#7A8699"        # metadado: rótulos pequenos, abas inativas
+COR_TEXTO_SOBRE_NAVY = "#B9CBDC"   # texto secundário sobre fundo navy
+
+# Superfícies e bordas.
+COR_FUNDO_CARD = "#F7F8FA"         # card de item de lista
+COR_FUNDO_CAMPO = "#F0F2F6"        # campos e barra de filtros (secondaryBackgroundColor do tema)
+COR_BORDA = "#E4E7EB"              # borda de quadros e painéis
+COR_BORDA_SUAVE = "#EEF0F3"        # divisória entre linhas
+
+# Escala de fonte (px). Nada fora dela.
+FONTE_PEQUENA = 12   # selos, rótulos, metadados
+FONTE_APOIO = 14     # botões compactos, campos, texto de apoio
+FONTE_BASE = 16      # corpo
+FONTE_DESTAQUE = 18  # número em destaque numa linha
+FONTE_SUBTITULO = 20
+FONTE_TITULO = 28    # título de seção
 # Único uso de tom "negativo" (avermelhado) do projeto — reservado para
 # quedas de venda no Resultado da ação. O resto do app evita vermelho de
 # propósito (ver comentários em modules/styles.py), mas aqui o pedido foi
@@ -288,19 +309,14 @@ ALTURA_CARTAO_FOTO_PX = 280
 # Campos Loja / Consultor (Aba Upload)
 # ---------------------------------------------------------------------------
 
-# O campo Loja usa o componente externo streamlit-searchbox (um combobox
-# React, com CSS próprio) e o campo Consultor usa st.text_input NATIVO do
-# Streamlit — tecnologias diferentes que, por padrão, têm aparência
-# diferente (altura, borda, cantos, cor de foco). Pedido explícito: os
-# dois têm que parecer EXATAMENTE o mesmo tipo de campo. Estas constantes
-# são a fonte única usada nos dois lugares — style_overrides do
-# st_searchbox em app.py E o CSS do text_input Consultor em styles.py —
-# pra garantir que não fiquem "quase iguais" por terem sido ajustados
-# separadamente.
-ALTURA_CAMPO_LOJA_CONSULTOR_PX = 42
+# O campo Loja usa o componente externo streamlit-searchbox (React, com CSS
+# próprio). Estas constantes o deixam igual ao campo NATIVO do Streamlit,
+# que é o padrão de todos os campos do app (busca, filtros, Consultor):
+# fundo cinza claro sem borda, 40px, cantos de 8px e borda navy no foco.
+ALTURA_CAMPO_LOJA_CONSULTOR_PX = 40
 RAIO_CAMPO_LOJA_CONSULTOR_PX = 8
-BORDA_CAMPO_LOJA_CONSULTOR = "#E4E7EB"  # mesma cor de borda usada nos cartões (.mdf-painel-marker etc.)
-FUNDO_CAMPO_LOJA_CONSULTOR = "#FFFFFF"
-TEXTO_CAMPO_LOJA_CONSULTOR = "#31333F"  # cor de texto padrão do Streamlit (tema claro)
-PLACEHOLDER_CAMPO_LOJA_CONSULTOR = "#6B7280"  # mesmo cinza usado em .mdf-produto-meta/.mdf-foto-vazio
-FONTE_CAMPO_LOJA_CONSULTOR_PX = 14
+BORDA_CAMPO_LOJA_CONSULTOR = COR_FUNDO_CAMPO  # borda da cor do fundo = sem borda visível, como o nativo
+FUNDO_CAMPO_LOJA_CONSULTOR = COR_FUNDO_CAMPO
+TEXTO_CAMPO_LOJA_CONSULTOR = COR_TEXTO
+PLACEHOLDER_CAMPO_LOJA_CONSULTOR = COR_TEXTO_MUTED
+FONTE_CAMPO_LOJA_CONSULTOR_PX = FONTE_APOIO

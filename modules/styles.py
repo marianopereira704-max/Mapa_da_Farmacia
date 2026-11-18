@@ -10,11 +10,14 @@ Cloud, sem depender de nenhum componente externo.
 """
 
 import base64
+import re
+import unicodedata
 from pathlib import Path
 
 import streamlit as st
 
 import config
+from modules.lojas_api import formatar_consultor
 
 
 @st.cache_resource(show_spinner=False)
@@ -49,7 +52,9 @@ def aplicar_estilo() -> None:
         }}
         .block-container {{
             padding-top: 1.5rem;
-            max-width: 1000px;
+            /* Largura padrão das telas (antes 1000px, que cortava os botões
+            da lista de lojas). */
+            max-width: 1280px;
         }}
 
         /* ---- Cabeçalho institucional ---- */
@@ -63,11 +68,11 @@ def aplicar_estilo() -> None:
             margin-bottom: 8px;
         }}
         .mdf-header-left {{ display: flex; align-items: center; gap: 14px; }}
-        .mdf-logo-badge {{
+        [data-testid="stMarkdownContainer"] .mdf-logo-badge {{
             width: 48px; height: 48px; border-radius: 50%;
             background: {config.COR_VERDE};
             display: flex; align-items: center; justify-content: center;
-            font-weight: 700; color: {config.COR_NAVY}; font-size: 15px;
+            font-weight: 700; color: {config.COR_NAVY}; font-size: 16px;
             flex-shrink: 0;
         }}
         .mdf-logo-img {{
@@ -75,11 +80,11 @@ def aplicar_estilo() -> None:
             object-fit: cover; flex-shrink: 0;
             background: #FFFFFF;
         }}
-        .mdf-header-title {{
-            font-size: 28px; font-weight: 800; letter-spacing: -0.01em;
+        [data-testid="stMarkdownContainer"] .mdf-header-title {{
+            font-size: 28px; font-weight: 700; letter-spacing: -0.01em;
             color: #FFFFFF; margin: 0; line-height: 1.15;
         }}
-        .mdf-header-subtitle {{ font-size: 13px; color: #B9CBDC; margin: 2px 0 0 0; }}
+        [data-testid="stMarkdownContainer"] .mdf-header-subtitle {{ font-size: 14px; color: {config.COR_TEXTO_SOBRE_NAVY}; margin: 2px 0 0 0; }}
 
         /* ---- Abas (st.tabs) — NÃO usado mais hoje (a página Análise
         virou 3 st.Page separadas por st.navigation/st.switch_page, com
@@ -88,14 +93,14 @@ def aplicar_estilo() -> None:
         pode voltar a existir no futuro. */
         .stTabs [data-baseweb="tab-list"] {{
             gap: 4px;
-            border-bottom: 1px solid #E4E7EB;
+            border-bottom: 1px solid {config.COR_BORDA};
         }}
         .stTabs [data-baseweb="tab"] {{
             height: auto;
             padding: 10px 16px;
             font-size: 14px;
             font-weight: 500;
-            color: #7A8699;
+            color: {config.COR_TEXTO_MUTED};
         }}
         .stTabs [aria-selected="true"] {{
             color: {config.COR_NAVY} !important;
@@ -107,17 +112,17 @@ def aplicar_estilo() -> None:
         st.Page (ver app.py), essas 3 deixaram de ser um único
         st.segmented_control dentro do mesmo script e viraram 3 st.Page
         genuinamente separadas: cada "aba" agora é um st.button() próprio
-        (dentro do seu st.container() com marcador ativo/inativo — mesmo
-        padrão marcador+:has() já usado no nav da sidebar logo abaixo) que
+        (dentro do seu st.container(key="mdf_aba_ativa_..." ou
+        "mdf_aba_inativa_...") — mesmo padrão do nav da sidebar) que
         chama st.switch_page(). Visual buscando repetir o .stTabs do topo
         deste arquivo o mais próximo possível (linha inferior colorida na
         aba ativa), não precisa ser pixel-perfect. */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-abas-analise-marker) {{
-            border-bottom: 1px solid #E4E7EB;
+        .st-key-mdf_abas_analise {{
+            border-bottom: 1px solid {config.COR_BORDA};
             margin-bottom: 8px;
         }}
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-ativa-marker) button,
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-inativa-marker) button {{
+        [class*="st-key-mdf_aba_ativa_"] button,
+        [class*="st-key-mdf_aba_inativa_"] button {{
             height: auto;
             padding: 10px 16px;
             font-size: 14px;
@@ -127,41 +132,36 @@ def aplicar_estilo() -> None:
             border-bottom: 2px solid transparent !important;
             box-shadow: none !important;
         }}
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-inativa-marker) button {{
-            color: #7A8699 !important;
+        [class*="st-key-mdf_aba_inativa_"] button {{
+            color: {config.COR_TEXTO_MUTED} !important;
             font-weight: 500 !important;
         }}
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-ativa-marker) button {{
+        [class*="st-key-mdf_aba_ativa_"] button {{
             color: {config.COR_NAVY} !important;
             font-weight: 600 !important;
             border-bottom-color: {config.COR_VERDE} !important;
         }}
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-ativa-marker) button:hover,
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-ativa-marker) button:focus-visible,
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-inativa-marker) button:hover,
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-aba-analise-inativa-marker) button:focus-visible {{
+        [class*="st-key-mdf_aba_ativa_"] button:hover,
+        [class*="st-key-mdf_aba_ativa_"] button:focus-visible,
+        [class*="st-key-mdf_aba_inativa_"] button:hover,
+        [class*="st-key-mdf_aba_inativa_"] button:focus-visible {{
             color: {config.COR_NAVY} !important;
         }}
 
-        /* Os seletores abaixo localizam o container-alvo pela distância
-        exata (em nível de DOM) até o marcador que colocamos como primeiro
-        elemento dentro dele — st.markdown envolve um <span> solto em
-        vários wrappers internos do Streamlit (stElementContainer >
-        stMarkdown > div > stMarkdownContainer > <p>) antes do próprio
-        marcador, e essa é a única forma de mirar o container "pai"
-        certo (e não um ancestral mais externo) sem um seletor CSS nativo
-        de "container mais próximo". Depende da estrutura interna do
-        Streamlit 1.60 — se uma atualização futura mudar esse HTML, os
-        2 blocos abaixo precisam ser reconferidos no navegador.  */
+        /* PADRÃO DO PROJETO para estilizar um container: dar `key` a ele
+        (st.container(key="mdf_...")) e mirar a classe .st-key-mdf_... que o
+        Streamlit põe no próprio container. Não usar marcador invisível com
+        :has(> div > div > ...): esse seletor conta níveis internos do
+        Streamlit e quebrou (fundo dos cards menor que o conteúdo). */
 
         /* ---- Quadro único que agrupa toda a lista de produtos ----
         Altura fixa com rolagem própria (max-height + overflow-y), para que
         o botão Salvar e as barras de busca — que ficam FORA deste quadro,
         acima dele — permaneçam sempre visíveis sem precisar de position:
         sticky/fixed. Só a lista de produtos rola; o resto da página não. */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-painel-marker) {{
+        [class*="st-key-mdf_painel_"] {{
             border-radius: 14px !important;
-            border: 1px solid #E4E7EB !important;
+            border: 1px solid {config.COR_BORDA} !important;
             background: #FFFFFF;
             padding: 18px !important;
             max-height: {config.ALTURA_PAINEL_PRODUTOS_PX}px;
@@ -170,36 +170,36 @@ def aplicar_estilo() -> None:
         /* Barra de rolagem própria do quadro, sempre visível e discreta
         (o scrollbar padrão do Chrome é um traço quase imperceptível) —
         WebKit-only, mas cobre o navegador usado no projeto (Chrome/Edge). */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-painel-marker)::-webkit-scrollbar {{
+        [class*="st-key-mdf_painel_"]::-webkit-scrollbar {{
             width: 8px;
         }}
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-painel-marker)::-webkit-scrollbar-track {{
+        [class*="st-key-mdf_painel_"]::-webkit-scrollbar-track {{
             background: transparent;
         }}
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-painel-marker)::-webkit-scrollbar-thumb {{
+        [class*="st-key-mdf_painel_"]::-webkit-scrollbar-thumb {{
             background: #C9CFD8;
             border-radius: 4px;
         }}
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-painel-marker)::-webkit-scrollbar-thumb:hover {{
+        [class*="st-key-mdf_painel_"]::-webkit-scrollbar-thumb:hover {{
             background: #A9B2BF;
         }}
 
         /* ---- Navegação da sidebar (Upload / Selecionar Loja / Análise) ----
         Substitui o st.radio nativo por 3 st.button() empilhados — cada um
-        envolvido por um st.container() com um marcador (mdf-navitem-ativo-
-        marker OU mdf-botao-discreto-marker, escolhido em Python conforme
+        envolvido por um st.container() com key mdf_nav_ativo_* OU
+        mdf_discreto_nav_*, escolhida em Python conforme
         a página atual). Escopado a [data-testid="stSidebar"] DE PROPÓSITO:
         o objetivo é diferenciar só os 3 botões do menu — um seletor
         :has() sem esse escopo poderia, no futuro, pegar qualquer outro
         botão dentro de um st.container() em outro lugar do app. */
-        [data-testid="stSidebar"] div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-navitem-ativo-marker) button {{
+        [data-testid="stSidebar"] [class*="st-key-mdf_nav_ativo_"] button {{
             background: {config.COR_NAVY} !important;
             border-color: {config.COR_NAVY} !important;
             color: #FFFFFF !important;
             font-weight: 600 !important;
         }}
-        [data-testid="stSidebar"] div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-navitem-ativo-marker) button:hover,
-        [data-testid="stSidebar"] div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-navitem-ativo-marker) button:focus-visible {{
+        [data-testid="stSidebar"] [class*="st-key-mdf_nav_ativo_"] button:hover,
+        [data-testid="stSidebar"] [class*="st-key-mdf_nav_ativo_"] button:focus-visible {{
             background: {config.COR_NAVY_CLARO} !important;
             border-color: {config.COR_NAVY_CLARO} !important;
             color: #FFFFFF !important;
@@ -208,20 +208,20 @@ def aplicar_estilo() -> None:
         /* ---- Botão discreto reaproveitável ----
         Usado pelos itens INATIVOS do menu lateral — fundo neutro claro, texto navy, sem
         preenchimento forte, pra não competir visualmente com as ações
-        primárias (Abrir, Enviar, Salvar). Ao contrário do marcador
+        primárias (Abrir, Enviar, Salvar). Ao contrário da key
         "ativo" acima, este NÃO é escopado à sidebar — é a mesma
         linguagem visual "secundária" reaproveitada em qualquer lugar do
         app que precise dela. */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-botao-discreto-marker) button {{
-            background: #F7F8FA !important;
-            border-color: #F7F8FA !important;
+        [class*="st-key-mdf_discreto_"] button {{
+            background: {config.COR_FUNDO_CARD} !important;
+            border-color: {config.COR_FUNDO_CARD} !important;
             color: {config.COR_NAVY} !important;
             font-weight: 500 !important;
         }}
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-botao-discreto-marker) button:hover,
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-botao-discreto-marker) button:focus-visible {{
-            background: #E4E7EB !important;
-            border-color: #E4E7EB !important;
+        [class*="st-key-mdf_discreto_"] button:hover,
+        [class*="st-key-mdf_discreto_"] button:focus-visible {{
+            background: {config.COR_BORDA} !important;
+            border-color: {config.COR_BORDA} !important;
             color: {config.COR_NAVY} !important;
         }}
 
@@ -229,64 +229,14 @@ def aplicar_estilo() -> None:
         Mesmo visual do quadro acima (cantos arredondados, borda sutil,
         padding) mas sem o max-height + overflow-y — aqui o conteúdo é um
         FORMULÁRIO (campos + botão de envio), não uma lista longa de itens
-        que precisa rolar por dentro; com o max-height do outro marcador,
+        que precisa rolar por dentro; com o max-height do outro painel,
         os campos de baixo (inclusive o botão "Enviar") ficavam cortados,
         só acessíveis por uma barra de rolagem interna pouco óbvia. */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-painel-form-marker) {{
+        .st-key-mdf_form_upload {{
             border-radius: 14px !important;
-            border: 1px solid #E4E7EB !important;
+            border: 1px solid {config.COR_BORDA} !important;
             background: #FFFFFF;
             padding: 18px !important;
-        }}
-
-        /* ---- Campo Consultor (Aba Upload) — casado visualmente com o
-        campo Loja ao lado ----
-        Loja usa o componente externo streamlit-searchbox (React, CSS
-        próprio, ver style_overrides em app.py); Consultor é um
-        st.text_input NATIVO. Por padrão os dois ficam com aparência bem
-        diferente (o searchbox vem mais alto, com cantos menos
-        arredondados, borda que só aparece quando focado — na cor
-        "primária" padrão do Streamlit, vermelha — e ícones de limpar/
-        abrir). Este bloco força o text_input nativo a usar os MESMOS
-        valores (altura, borda, raio, fundo, cor de texto/placeholder)
-        passados ao searchbox via style_overrides — as constantes em
-        config.py são a fonte única dos dois lados, pra não haver deriva
-        entre eles. Escopado via o marcador .mdf-campo-consultor-marker
-        (mesmo padrão dos demais blocos acima) pra não afetar nenhum
-        outro text_input do app (busca de produto, senha de login etc.). */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-campo-consultor-marker) [data-testid="stTextInput"] input {{
-            height: {config.ALTURA_CAMPO_LOJA_CONSULTOR_PX}px !important;
-            min-height: {config.ALTURA_CAMPO_LOJA_CONSULTOR_PX}px !important;
-            border: 1px solid {config.BORDA_CAMPO_LOJA_CONSULTOR} !important;
-            border-radius: {config.RAIO_CAMPO_LOJA_CONSULTOR_PX}px !important;
-            background: {config.FUNDO_CAMPO_LOJA_CONSULTOR} !important;
-            color: {config.TEXTO_CAMPO_LOJA_CONSULTOR} !important;
-            font-size: {config.FONTE_CAMPO_LOJA_CONSULTOR_PX}px !important;
-            box-shadow: none !important;
-        }}
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-campo-consultor-marker) [data-testid="stTextInput"] input::placeholder {{
-            color: {config.PLACEHOLDER_CAMPO_LOJA_CONSULTOR} !important;
-        }}
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-campo-consultor-marker) [data-testid="stTextInput"] input:focus {{
-            border-color: {config.COR_NAVY} !important;
-            box-shadow: none !important;
-        }}
-        /* O wrapper nativo do input (div pai do <input>) tem sua própria
-        borda/fundo/altura por baixo do input — sem zerá-los e igualar a
-        altura, sobra uma borda cinza-clara e um fundo cinza residual
-        alguns pixels menores que o input por trás do que definimos acima
-        (visível como um "halo"/degrau nos cantos). Selector correto pra
-        esse wrapper é [data-testid="stTextInputRootElement"] — o nome
-        mudou numa atualização do Streamlit (a versão anterior usava
-        [data-baseweb="input"], que não existe mais no DOM atual; a regra
-        antiga nunca chegava a aplicar por isso). */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-campo-consultor-marker) [data-testid="stTextInput"] [data-testid="stTextInputRootElement"] {{
-            border: none !important;
-            background: transparent !important;
-            box-shadow: none !important;
-            height: {config.ALTURA_CAMPO_LOJA_CONSULTOR_PX}px !important;
-            padding: 0 !important;
-            box-sizing: border-box !important;
         }}
 
         /* ---- Rótulo "Loja" desenhado por fora do streamlit-searchbox ----
@@ -302,9 +252,9 @@ def aplicar_estilo() -> None:
         #31333F (token bodyText do tema claro), min-height 1.5rem (24px,
         igual ao tema.fontSizes.xl) e margin-bottom 0.25rem (4px, igual a
         theme.spacing.twoXS). */
-        .mdf-campo-loja-label {{
-            font-size: 0.875rem;
-            color: #31333F;
+        [data-testid="stMarkdownContainer"] .mdf-campo-loja-label {{
+            font-size: 14px;
+            color: {config.COR_TEXTO};
             display: flex;
             flex-direction: row;
             align-items: center;
@@ -336,58 +286,20 @@ def aplicar_estilo() -> None:
             margin-top: -12px !important;
         }}
 
-        /* ---- Mesmo problema do bloco acima, só que do lado do Consultor ----
-        O marcador .mdf-campo-consultor-marker (usado só pra escopar o CSS
-        de altura/borda/cor do bloco mais acima, sem afetar outros
-        text_input do app) é escrito como um st.markdown SEPARADO, logo
-        antes do st.text_input("Consultor", ...) — ou seja, ele também é
-        um elemento a mais dentro da coluna, e o Streamlit também insere o
-        mesmo espaçamento padrão (1rem) entre ele e a caixa do Consultor
-        logo abaixo. Isso não tinha sido notado antes porque, quando o
-        campo Loja também tinha esse espaço "sobrando" (antes do bloco
-        acima existir), os dois lados ficavam igualmente deslocados pra
-        baixo — pareciam alinhados um com o outro, só que os dois errados.
-        Depois de corrigir só o lado da Loja, esse resto ficou visível: a
-        caixa do Consultor nascia visivelmente mais baixa que a da Loja.
-        Mesma solução: cancela o espaçamento entre o marcador e a caixa que
-        vem logo depois dele (a checagem via :has() do marcador, sem contar
-        níveis exatos de div, é proposital — mais resistente a mudanças na
-        estrutura interna do Streamlit do que contar profundidade fixa). */
-        div[data-testid="stElementContainer"]:has(.mdf-campo-consultor-marker) + div[data-testid="stElementContainer"] {{
-            margin-top: -1rem !important;
-        }}
-        /* O -1rem acima só cancela o ESPAÇAMENTO padrão entre elementos —
-        não zera a ALTURA PRÓPRIA do <p> vazio que envolve o marcador (todo
-        st.markdown gera um parágrafo, mesmo com conteúdo invisível). Essa
-        altura residual (a de uma linha de texto vazia) sobrava e empurrava
-        a caixa do Consultor alguns pixels abaixo da caixa da Loja, mesmo
-        com o cancelamento acima. Mesmo padrão já usado em .mdf-foto-marker
-        mais abaixo: colapsa o parágrafo E o stElementContainer que o
-        envolve a zero, não só o espaçamento entre eles. */
-        p:has(> .mdf-campo-consultor-marker) {{
-            margin: 0; padding: 0; height: 0; line-height: 0;
-        }}
-        div[data-testid="stElementContainer"]:has(.mdf-campo-consultor-marker) {{
-            height: 0 !important;
-            min-height: 0 !important;
-            overflow: hidden !important;
-        }}
-
         /* Cards de produto (linhas dentro do quadro) — sem borda própria,
         só um leve background para diferenciar cada linha. */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-row-marker) {{
+        [class*="st-key-mdf_produto_"] {{
             border-radius: 10px;
-            background: #F7F8FA;
-            padding: 8px 10px 4px 10px;
-            margin-bottom: 6px;
+            background: {config.COR_FUNDO_CARD};
+            padding: 8px 12px;
         }}
 
         /* Situação de cada arquivo no painel "Arquivos do mês" (Análise) */
-        .mdf-check-ok {{ font-size: 13px; color: {config.COR_VERDE_TEXTO}; margin: 2px 0; }}
-        .mdf-check-falta {{ font-size: 13px; color: {config.COR_AMBAR_TEXTO}; margin: 2px 0; }}
+        [data-testid="stMarkdownContainer"] .mdf-check-ok {{ font-size: 14px; color: {config.COR_VERDE_TEXTO}; margin: 2px 0; }}
+        [data-testid="stMarkdownContainer"] .mdf-check-falta {{ font-size: 14px; color: {config.COR_AMBAR_TEXTO}; margin: 2px 0; }}
 
         /* Etiqueta de posição estilo "tag de prateleira" */
-        .mdf-tag {{
+        [data-testid="stMarkdownContainer"] .mdf-tag {{
             background: {config.COR_NAVY};
             color: #FFFFFF;
             font-size: 12px;
@@ -405,15 +317,15 @@ def aplicar_estilo() -> None:
         .st-key-mdf_faixa_ajuste, .st-key-mdf_faixa_ajuste_pendente {{
             border-radius: 10px;
             padding: 8px 12px 8px 16px;
-            background: #F4F6F9;
+            background: {config.COR_FUNDO_CARD};
         }}
         .st-key-mdf_faixa_ajuste_pendente {{ background: #FAEEDA; }}
-        .mdf-faixa-ajuste-texto {{ margin: 0; color: #1F2937; font-weight: 600; }}
-        .st-key-mdf_faixa_ajuste_pendente .mdf-faixa-ajuste-texto {{ color: #6B3F08; }}
+        .mdf-faixa-ajuste-texto {{ margin: 0; color: {config.COR_TEXTO}; font-weight: 600; }}
+        .st-key-mdf_faixa_ajuste_pendente .mdf-faixa-ajuste-texto {{ color: {config.COR_AMBAR_TEXTO}; }}
 
         /* ---- Selecionar Loja: barra de meses e lista de lojas ---- */
         .st-key-mdf_barra_meses {{
-            background: #F0F2F6;
+            background: {config.COR_FUNDO_CAMPO};
             border-radius: 12px;
             padding: 8px;
         }}
@@ -421,7 +333,7 @@ def aplicar_estilo() -> None:
         .st-key-mdf_barra_meses button[kind="secondary"] {{
             background: transparent !important;
             border-color: transparent !important;
-            color: #374151 !important;
+            color: {config.COR_TEXTO} !important;
         }}
         .st-key-mdf_barra_meses button[kind="secondary"]:hover {{ background: #FFFFFF !important; }}
         .st-key-mdf_barra_meses button[kind="primary"] {{
@@ -431,41 +343,43 @@ def aplicar_estilo() -> None:
         }}
         .st-key-mdf_lista_lojas {{ gap: 0 !important; }}
         [class*="st-key-mdf_linha_loja_"] {{
-            border-bottom: 1px solid #EEF0F3;
+            border-bottom: 1px solid {config.COR_BORDA_SUAVE};
             border-radius: 6px;
             padding: 6px 8px;
         }}
         .st-key-mdf_lista_lojas [data-testid="stLayoutWrapper"]:last-child > [class*="st-key-mdf_linha_loja_"] {{ border-bottom: 0; }}
-        [class*="st-key-mdf_linha_loja_"]:hover {{ background: #F7F8FA; }}
-        /* O Markdown do Streamlit tem margem negativa embaixo, que deixa o
-        texto fora do centro em relação aos botões da mesma linha. */
-        [data-testid="stMarkdownContainer"]:has(> .mdf-loja-cod, > .mdf-loja-razao, > .mdf-loja-ultimo,> .mdf-loja-consultor, > .mdf-lista-apoio, > .mdf-barra-mes-rotulo, > .mdf-paginacao-info, > .mdf-faixa-ajuste-texto) {{
+        [class*="st-key-mdf_linha_loja_"]:hover {{ background: {config.COR_FUNDO_CARD}; }}
+        /* O Markdown do Streamlit tem margem negativa embaixo (-1rem): o texto
+        sai do centro em relação aos botões da mesma linha e a última linha
+        vaza para fora do card que a envolve. Vale para todo HTML do app. */
+        [data-testid="stMarkdownContainer"]:has(> [class*="mdf-"]) {{
             margin-bottom: 0 !important;
         }}
-        .mdf-loja-cod {{ font-weight: 700; color: {config.COR_NAVY}; margin: 0; }}
-        .mdf-loja-razao {{ font-weight: 600; color: #1F2937; margin: 0; overflow-wrap: anywhere; }}
-        .mdf-loja-consultor {{ color: #4B5563; margin: 0; overflow-wrap: anywhere; }}
-        .mdf-lista-apoio {{ color: #4B5563; margin: 0; }}
-        .mdf-lista-vazia {{ color: #4B5563; margin: 0; padding: 32px 16px; text-align: center; }}
-        .mdf-loja-ultimo {{ margin: 0; color: #1F2937; font-weight: 600; font-size: 14px; white-space: nowrap; }}
-        .mdf-loja-ultimo-rotulo {{
-            display: block; color: #7A8699; font-weight: 500; font-size: 11px;
+        .mdf-loja-cod {{ font-weight: 700; color: {config.COR_NAVY}; margin: 0; white-space: nowrap; }}
+        .mdf-loja-razao {{ font-weight: 600; color: {config.COR_TEXTO}; margin: 0; overflow-wrap: anywhere; }}
+        .mdf-loja-consultor {{ color: {config.COR_TEXTO_SECUNDARIO}; margin: 0; overflow-wrap: anywhere; }}
+        .mdf-lista-apoio {{ color: {config.COR_TEXTO_SECUNDARIO}; margin: 0; font-size: 14px; }}
+        .mdf-lista-vazia {{ color: {config.COR_TEXTO_SECUNDARIO}; margin: 0; padding: 32px 16px; text-align: center; }}
+        [data-testid="stMarkdownContainer"] .mdf-loja-ultimo {{ margin: 0; color: {config.COR_TEXTO}; font-weight: 600; font-size: 14px; white-space: nowrap; }}
+        [data-testid="stMarkdownContainer"] .mdf-loja-ultimo-rotulo {{
+            display: block; color: {config.COR_TEXTO_MUTED}; font-weight: 500; font-size: 12px;
             text-transform: uppercase; letter-spacing: .04em; line-height: 1.2;
         }}
 
+        /* Upload: a linha "200MB per file • XLSX" vem em inglês do Streamlit e
+        não tem tradução; os formatos aceitos ficam na ajuda (?) do rótulo. */
+        [data-testid="stFileUploaderDropzoneInstructions"] {{ display: none !important; }}
+
         /* ---- Selecionar Loja: pop-up "Selecione o mês" ---- */
-        .mdf-dialog-mes-loja {{ margin: -8px 0 4px; color: #7A8699; font-size: 14px; overflow-wrap: anywhere; }}
-        .mdf-dialog-mes-ano {{
-            margin: 10px 0 2px; color: {config.COR_NAVY}; font-weight: 700; font-size: 13px;
-            letter-spacing: .08em; border-bottom: 1px solid #E4E7EB; padding-bottom: 4px;
-        }}
-        [data-testid="stMarkdownContainer"]:has(> .mdf-dialog-mes-loja, > .mdf-dialog-mes-ano, > .mdf-card-mes) {{
-            margin-bottom: 0 !important;
+        [data-testid="stMarkdownContainer"] .mdf-dialog-mes-loja {{ margin: -8px 0 4px; color: {config.COR_TEXTO_MUTED}; font-size: 14px; overflow-wrap: anywhere; }}
+        [data-testid="stMarkdownContainer"] .mdf-dialog-mes-ano {{
+            margin: 10px 0 2px; color: {config.COR_NAVY}; font-weight: 700; font-size: 14px;
+            letter-spacing: .08em; border-bottom: 1px solid {config.COR_BORDA}; padding-bottom: 4px;
         }}
         [class*="st-key-mdf_card_mes_"] {{
             position: relative;
-            background: #F7F8FA;
-            border: 1px solid #E4E7EB;
+            background: {config.COR_FUNDO_CARD};
+            border: 1px solid {config.COR_BORDA};
             border-radius: 12px;
             padding: 12px 14px;
             min-height: 96px;
@@ -492,13 +406,13 @@ def aplicar_estilo() -> None:
         }}
         .mdf-card-mes {{ display: flex; flex-direction: column; gap: 2px; }}
         .mdf-card-mes-topo {{ display: flex; align-items: center; justify-content: space-between; gap: 6px; }}
-        .mdf-card-mes-nome {{ font-size: 17px; font-weight: 700; color: {config.COR_NAVY}; line-height: 1.2; }}
-        .mdf-card-mes-ano {{ font-size: 12px; color: #7A8699; }}
-        .mdf-card-mes-selo {{
+        [data-testid="stMarkdownContainer"] .mdf-card-mes-nome {{ font-size: 16px; font-weight: 700; color: {config.COR_NAVY}; line-height: 1.2; }}
+        [data-testid="stMarkdownContainer"] .mdf-card-mes-ano {{ font-size: 12px; color: {config.COR_TEXTO_MUTED}; }}
+        [data-testid="stMarkdownContainer"] .mdf-card-mes-selo {{
             background: #8DC63F; color: #FFFFFF; border-radius: 999px;
-            padding: 1px 8px; font-size: 11px; font-weight: 700;
+            padding: 1px 8px; font-size: 12px; font-weight: 700;
         }}
-        .mdf-card-mes-arquivos {{
+        [data-testid="stMarkdownContainer"] .mdf-card-mes-arquivos {{
             display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;
             font-size: 12px; font-weight: 600; color: #27500A; align-self: flex-start;
         }}
@@ -508,11 +422,15 @@ def aplicar_estilo() -> None:
         }}
         .mdf-card-mes-arquivos.incompleto svg {{ color: #854F0B; }}
         [class*="st-key-mdf_card_mes_atual_"] .mdf-card-mes-nome {{ color: #FFFFFF; }}
-        [class*="st-key-mdf_card_mes_atual_"] .mdf-card-mes-ano {{ color: #C9D6E5; }}
+        [class*="st-key-mdf_card_mes_atual_"] .mdf-card-mes-ano {{ color: {config.COR_TEXTO_SOBRE_NAVY}; }}
         [class*="st-key-mdf_card_mes_atual_"] .mdf-card-mes-arquivos {{ color: #FFFFFF; }}
         [class*="st-key-mdf_card_mes_atual_"] .mdf-card-mes-arquivos svg {{ color: #8DC63F; }}
         [class*="st-key-mdf_card_mes_atual_"] .mdf-card-mes-arquivos.incompleto {{ color: #854F0B; }}
         [class*="st-key-mdf_card_mes_atual_"] .mdf-card-mes-arquivos.incompleto svg {{ color: #854F0B; }}
+        /* Ações da linha: os botões nunca encolhem nem cortam o texto; em tela
+        estreita (menu lateral aberto) empilham em vez de invadir a coluna ao lado. */
+        [class*="st-key-mdf_acoes_loja_"] {{ flex-wrap: wrap !important; justify-content: flex-end; row-gap: 6px; }}
+        [class*="st-key-mdf_acoes_loja_"] > div {{ flex-shrink: 0 !important; }}
         [class*="st-key-analise_loja_"] button,
         [class*="st-key-upload_loja_"] button {{
             min-height: 32px !important;
@@ -523,7 +441,7 @@ def aplicar_estilo() -> None:
             white-space: nowrap;
         }}
         [class*="st-key-analise_loja_"] button p,
-        [class*="st-key-upload_loja_"] button p {{ font-size: 13px !important; font-weight: 600 !important; }}
+        [class*="st-key-upload_loja_"] button p {{ font-size: 14px !important; font-weight: 600 !important; }}
         [class*="st-key-analise_loja_"] button {{
             background: #EAF0F7 !important;
             border-color: #EAF0F7 !important;
@@ -537,21 +455,23 @@ def aplicar_estilo() -> None:
             border: 1px solid #D5DBE3 !important;
         }}
         [class*="st-key-upload_loja_"] button:hover {{
-            background: #F0F2F6 !important;
+            background: {config.COR_FUNDO_CAMPO} !important;
             border-color: #4A6E90 !important;
         }}
 
-        .mdf-produto-nome {{ font-size: 14px; color: #1A1A1A; margin: 4px 0 0 0; }}
-        .mdf-produto-meta {{ font-size: 12px; color: #6B7280; margin: 0; }}
+        [data-testid="stMarkdownContainer"] .mdf-produto-nome {{ font-size: 16px; color: {config.COR_TEXTO}; margin: 4px 0 0 0; }}
+        .mdf-produto-info {{ display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }}
+        [data-testid="stMarkdownContainer"] .mdf-produto-info p {{ margin: 0; }}
+        [data-testid="stMarkdownContainer"] .mdf-produto-meta {{ font-size: 12px; color: {config.COR_TEXTO_SECUNDARIO}; margin: 0; }}
 
         /* ---- Controles de paginação (Ajuste de mix / Sugestão de GC /
         Produto a produto) — texto central "Página X de Y". Os botões
         "← Anterior"/"Próxima →" ao lado são st.button() nativos, sem
         marcador especial (visual padrão do Streamlit já basta aqui). */
-        .mdf-paginacao-info {{
+        [data-testid="stMarkdownContainer"] .mdf-paginacao-info {{
             text-align: center;
-            font-size: 13px;
-            color: #7A8699;
+            font-size: 14px;
+            color: {config.COR_TEXTO_MUTED};
             margin: 6px 0;
             line-height: 2.2;
         }}
@@ -559,7 +479,7 @@ def aplicar_estilo() -> None:
         /* Quantidade em destaque (Aba 2 — Sugestão de GC): é o dado
         acionável da linha, precisa ser o elemento visualmente mais forte,
         maior contraste que o nome do produto. */
-        .mdf-produto-qtd-destaque {{
+        [data-testid="stMarkdownContainer"] .mdf-produto-qtd-destaque {{
             font-size: 18px;
             font-weight: 700;
             color: {config.COR_NAVY};
@@ -568,7 +488,7 @@ def aplicar_estilo() -> None:
         }}
 
         /* Badges de status (sugestão automática / confirmado / sem estoque / não encontrado) */
-        .mdf-badge {{
+        [data-testid="stMarkdownContainer"] .mdf-badge {{
             font-size: 12px; font-weight: 600; padding: 3px 8px;
             border-radius: 6px; display: inline-block;
         }}
@@ -576,13 +496,13 @@ def aplicar_estilo() -> None:
         .mdf-badge-ok {{ background: {config.COR_VERDE_BG}; color: {config.COR_VERDE_TEXTO}; }}
         .mdf-badge-alterado {{ background: {config.COR_AZUL_BG}; color: {config.COR_AZUL_TEXTO}; }}
         .mdf-badge-sem-estoque {{ background: {config.COR_CINZA_BG}; color: {config.COR_CINZA_TEXTO}; }}
-        .mdf-badge-nao-encontrado {{ background: #EEF0F3; color: #7A8699; }}
+        .mdf-badge-nao-encontrado {{ background: {config.COR_BORDA_SUAVE}; color: {config.COR_TEXTO_MUTED}; }}
         .mdf-badge-frentes {{ background: {config.COR_ROXO_BG}; color: {config.COR_ROXO_TEXTO}; }}
 
         /* ---- Chips de grupo e situação (Resultado da ação). Vermelho =
         queda de venda (única exceção à convenção "nunca vermelho" do resto
         do projeto — pedido explícito pra dar mais destaque à queda). */
-        .mdf-chip {{
+        [data-testid="stMarkdownContainer"] .mdf-chip {{
             display: inline-flex; align-items: center; gap: 3px;
             font-size: 12px; font-weight: 700; padding: 2px 9px;
             border-radius: 10px; white-space: nowrap;
@@ -602,15 +522,15 @@ def aplicar_estilo() -> None:
         deliberada à convenção "nunca vermelho" do projeto — aqui o vermelho
         foi escolhido de propósito pra chamar mais atenção que o âmbar padrão,
         já que é sinal de dado inválido, não só de atenção normal. */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-row-qtd-negativa-marker) [data-testid="stNumberInput"] button {{
+        [class*="st-key-mdf_produto_neg_"] [data-testid="stNumberInput"] button {{
             border-color: {config.COR_VERMELHO_TEXTO} !important;
             color: {config.COR_VERMELHO_TEXTO} !important;
         }}
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-row-qtd-negativa-marker) [data-testid="stNumberInput"] input {{
+        [class*="st-key-mdf_produto_neg_"] [data-testid="stNumberInput"] input {{
             color: {config.COR_VERMELHO_TEXTO} !important;
             font-weight: 700;
         }}
-        .mdf-qtd-alerta-icone {{
+        [data-testid="stMarkdownContainer"] .mdf-qtd-alerta-icone {{
             color: {config.COR_VERMELHO_TEXTO};
             font-size: 16px;
             display: flex;
@@ -626,62 +546,62 @@ def aplicar_estilo() -> None:
         div[data-testid="stMarkdownContainer"] p.mdf-secao-titulo {{ font-size: 28px; font-weight: 700; color: {config.COR_NAVY}; line-height: 1.2; margin: 0; }}
         .mdf-ra-icone {{ width: 20px; height: 20px; flex: none; }}
         .mdf-ra-topo {{ display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 16px 0; }}
-        div[data-testid="stMarkdownContainer"] p.mdf-ra-subtitulo {{ margin: 0; font-size: 16px; color: #4B5563; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-subtitulo {{ margin: 0; font-size: 16px; color: {config.COR_TEXTO_SECUNDARIO}; }}
         .mdf-ra-periodo {{
             display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; background: #FFFFFF; border-radius: 12px;
             box-shadow: 0 1px 2px rgba(23,55,94,.06), 0 2px 8px rgba(23,55,94,.04); color: {config.COR_NAVY};
         }}
-        .mdf-ra-periodo dl {{ margin: 0; display: grid; grid-template-columns: auto auto; gap: 4px 12px; font-size: 14px; line-height: 1.4; }}
-        .mdf-ra-periodo dt {{ font-size: 12px; color: #6B7280; align-self: center; }}
-        .mdf-ra-periodo dd {{ margin: 0; font-weight: 600; color: #1F2937; }}
+        [data-testid="stMarkdownContainer"] .mdf-ra-periodo dl {{ margin: 0; display: grid; grid-template-columns: auto auto; gap: 4px 12px; font-size: 14px; line-height: 1.4; }}
+        [data-testid="stMarkdownContainer"] .mdf-ra-periodo dt {{ font-size: 12px; color: {config.COR_TEXTO_SECUNDARIO}; align-self: center; }}
+        .mdf-ra-periodo dd {{ margin: 0; font-weight: 600; color: {config.COR_TEXTO}; }}
         .mdf-ra-cartao {{
             display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 32px; align-items: center;
             background: #FFFFFF; border-radius: 12px; padding: 24px; margin: 0 0 16px 0;
             box-shadow: 0 1px 2px rgba(23,55,94,.06), 0 2px 8px rgba(23,55,94,.04);
         }}
         .mdf-ra-principal {{ display: flex; flex-direction: column; gap: 8px; }}
-        div[data-testid="stMarkdownContainer"] p.mdf-ra-rotulo {{ margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #4B5563; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-rotulo {{ margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: {config.COR_TEXTO_SECUNDARIO}; }}
         div[data-testid="stMarkdownContainer"] p.mdf-ra-valor {{ margin: 0; font-size: 44px; font-weight: 700; line-height: 1.2; }}
-        .mdf-ra-valor small {{ font-size: 16px; font-weight: 600; color: #4B5563; }}
+        [data-testid="stMarkdownContainer"] .mdf-ra-valor small {{ font-size: 16px; font-weight: 600; color: {config.COR_TEXTO_SECUNDARIO}; }}
         div[data-testid="stMarkdownContainer"] p.mdf-ra-sem-base {{ font-size: 28px; color: {config.COR_NAVY}; }}
-        div[data-testid="stMarkdownContainer"] p.mdf-ra-frase {{ margin: 0; font-size: 16px; color: #1F2937; }}
-        div[data-testid="stMarkdownContainer"] p.mdf-ra-apoio {{ margin: 0; font-size: 14px; color: #4B5563; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-frase {{ margin: 0; font-size: 16px; color: {config.COR_TEXTO}; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-apoio {{ margin: 0; font-size: 14px; color: {config.COR_TEXTO_SECUNDARIO}; }}
         div[data-testid="stMarkdownContainer"] p.mdf-ra-h2 {{ display: flex; align-items: center; gap: 8px; margin: 16px 0 4px 0; font-size: 20px; font-weight: 700; color: {config.COR_NAVY}; line-height: 1.3; }}
         .mdf-ra-positivo {{ color: {config.COR_VERDE_TEXTO}; }}
         .mdf-ra-negativo {{ color: {config.COR_VERMELHO_TEXTO}; }}
-        .mdf-ra-suave {{ color: #4B5563; }}
+        .mdf-ra-suave {{ color: {config.COR_TEXTO_SECUNDARIO}; }}
         .mdf-ra-selos {{ display: flex; flex-wrap: wrap; gap: 8px; }}
         .mdf-chip.mdf-ra-selo {{ gap: 4px; padding: 4px 12px; border-radius: 999px; font-weight: 600; }}
-        .mdf-ra-selo b {{ font-size: 14px; }}
+        [data-testid="stMarkdownContainer"] .mdf-ra-selo b {{ font-size: 14px; }}
         .mdf-ra-comparacao {{ display: flex; flex-direction: column; gap: 16px; min-width: 0; font-variant-numeric: tabular-nums; }}
-        .mdf-ra-linha {{ display: grid; grid-template-columns: 56px 88px minmax(0, 1fr) 64px; align-items: center; gap: 12px; font-size: 14px; }}
-        .mdf-ra-quando {{ font-weight: 600; color: #4B5563; }}
-        .mdf-ra-rs {{ font-weight: 700; color: #1F2937; text-align: right; }}
-        .mdf-ra-un {{ color: #4B5563; text-align: right; }}
+        [data-testid="stMarkdownContainer"] .mdf-ra-linha {{ display: grid; grid-template-columns: 56px 88px minmax(0, 1fr) 64px; align-items: center; gap: 12px; font-size: 14px; }}
+        .mdf-ra-quando {{ font-weight: 600; color: {config.COR_TEXTO_SECUNDARIO}; }}
+        .mdf-ra-rs {{ font-weight: 700; color: {config.COR_TEXTO}; text-align: right; }}
+        .mdf-ra-un {{ color: {config.COR_TEXTO_SECUNDARIO}; text-align: right; }}
         .mdf-ra-trilho {{ display: block; height: 10px; background: {config.COR_CINZA_BG}; border-radius: 999px; overflow: hidden; }}
         .mdf-ra-trilho span {{ display: block; height: 100%; border-radius: 999px; }}
-        div[data-testid="stMarkdownContainer"] p.mdf-ra-composicao {{ margin: 0; padding-top: 12px; border-top: 1px solid #F0F1F4; font-size: 14px; color: #4B5563; }}
-        .mdf-ra-composicao b {{ color: #1F2937; font-weight: 600; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-composicao {{ margin: 0; padding-top: 12px; border-top: 1px solid {config.COR_BORDA_SUAVE}; font-size: 14px; color: {config.COR_TEXTO_SECUNDARIO}; }}
+        .mdf-ra-composicao b {{ color: {config.COR_TEXTO}; font-weight: 600; }}
         .mdf-ra-tabela-caixa {{ overflow-x: auto; background: #FFFFFF; border-radius: 12px; padding: 8px; margin: 8px 0; }}
-        .mdf-ra-tabela {{ width: 100%; min-width: 760px; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }}
-        .mdf-ra-tabela th {{
+        [data-testid="stMarkdownContainer"] .mdf-ra-tabela {{ width: 100%; min-width: 760px; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }}
+        [data-testid="stMarkdownContainer"] .mdf-ra-tabela th {{
             padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 600; letter-spacing: .04em;
-            text-transform: uppercase; color: #4B5563; border: 0; border-bottom: 1px solid #E5E7EB; white-space: nowrap;
+            text-transform: uppercase; color: {config.COR_TEXTO_SECUNDARIO}; border: 0; border-bottom: 1px solid {config.COR_BORDA}; white-space: nowrap;
         }}
-        .mdf-ra-tabela td {{ padding: 12px 16px; border: 0; border-bottom: 1px solid #F0F1F4; vertical-align: middle; color: #1F2937; }}
+        .mdf-ra-tabela td {{ padding: 12px 16px; border: 0; border-bottom: 1px solid {config.COR_BORDA_SUAVE}; vertical-align: middle; color: {config.COR_TEXTO}; }}
         .mdf-ra-tabela tr:last-child td {{ border-bottom: 0; }}
-        .mdf-ra-tabela tbody tr:hover td {{ background: #F9FAFB; }}
+        .mdf-ra-tabela tbody tr:hover td {{ background: {config.COR_FUNDO_CARD}; }}
         .mdf-ra-tabela th.mdf-ra-num, .mdf-ra-tabela td.mdf-ra-num {{ text-align: right; white-space: nowrap; }}
         .mdf-ra-tabela td.mdf-ra-positivo {{ color: {config.COR_VERDE_TEXTO}; }}
         .mdf-ra-tabela td.mdf-ra-negativo {{ color: {config.COR_VERMELHO_TEXTO}; }}
-        .mdf-ra-tabela td.mdf-ra-suave {{ color: #4B5563; }}
+        .mdf-ra-tabela td.mdf-ra-suave {{ color: {config.COR_TEXTO_SECUNDARIO}; }}
         .mdf-ra-produto {{ font-weight: 600; }}
         .mdf-ra-tabela td.mdf-ra-forte {{ font-weight: 700; }}
-        div[data-testid="stMarkdownContainer"] p.mdf-ra-vazio {{ margin: 8px 0; padding: 32px 16px; text-align: center; font-size: 14px; color: #4B5563; background: #FFFFFF; border-radius: 12px; }}
+        div[data-testid="stMarkdownContainer"] p.mdf-ra-vazio {{ margin: 8px 0; padding: 32px 16px; text-align: center; font-size: 14px; color: {config.COR_TEXTO_SECUNDARIO}; background: #FFFFFF; border-radius: 12px; }}
         /* Dica ao passar o mouse (ou focar pelo teclado) */
-        .mdf-dica {{ position: relative; display: inline-block; cursor: help; font-size: 14px; font-weight: 400; color: #4B5563; letter-spacing: 0; }}
+        [data-testid="stMarkdownContainer"] .mdf-dica {{ position: relative; display: inline-block; cursor: help; font-size: 14px; font-weight: 400; color: {config.COR_TEXTO_SECUNDARIO}; letter-spacing: 0; }}
         .mdf-dica:focus-visible {{ outline: 2px solid {config.COR_AZUL_TEXTO}; outline-offset: 2px; border-radius: 999px; }}
-        .mdf-dica-caixa {{
+        [data-testid="stMarkdownContainer"] .mdf-dica-caixa {{
             position: absolute; z-index: 20; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: 240px;
             padding: 12px; border-radius: 12px; background: {config.COR_NAVY}; color: #FFFFFF;
             font-size: 12px; font-weight: 400; line-height: 1.5; text-transform: none; text-align: left; white-space: normal;
@@ -693,7 +613,7 @@ def aplicar_estilo() -> None:
         /* ---- Cartões de foto (Aba 3 — Conferência) ----
 
         /* ---- Cartões de foto (Aba 3 — Conferência) ----
-        Mesma linguagem visual do quadro de produtos (.mdf-painel-marker):
+        Mesma linguagem visual do quadro de produtos (mdf_painel_*):
         cantos arredondados, borda sutil — com uma sombra leve por cima,
         já que aqui cada cartão é uma peça isolada (não um quadro único
         agrupando várias linhas) e se beneficia de uma elevação discreta.
@@ -701,12 +621,11 @@ def aplicar_estilo() -> None:
         A imagem em si é um st.image() NATIVO (não <img> em HTML solto),
         pra ganhar o ícone de tela cheia do próprio Streamlit — a moldura
         é aplicada por FORA dele, no st.container() que o envolve, via o
-        mesmo padrão de marcador invisível + :has() usado em
-        .mdf-painel-marker/.mdf-row-marker. Altura FIXA (não min-height)
+        key do container (mdf_foto_*), como os demais. Altura FIXA (não min-height)
         pra os 3 cartões ficarem sempre alinhados entre si, tenham ou não
         imagem — a foto usa object-fit: contain dentro dessa altura. */
-        .mdf-foto-titulo {{
-            font-size: 15px;
+        [data-testid="stMarkdownContainer"] .mdf-foto-titulo {{
+            font-size: 16px;
             font-weight: 700;
             color: {config.COR_NAVY};
             margin: 0 0 8px 0;
@@ -722,34 +641,15 @@ def aplicar_estilo() -> None:
         div[data-testid="stElementContainer"]:has(.mdf-foto-titulo) {{
             pointer-events: none;
         }}
-        /* O marcador em si some completamente (display:none não o remove
-        do DOM, então o seletor :has() continua funcionando — só evita que
-        ele seja desenhado). Sem isso, o <p> que o envolve fica com a
-        margem padrão do navegador e, empilhado em cima da imagem via
-        flex-direction: column, acaba sobrepondo (e capturando o clique
-        de) o botão nativo de tela cheia do Streamlit no canto da foto. */
-        .mdf-foto-marker {{ display: none; }}
-        p:has(> .mdf-foto-marker) {{ margin: 0; padding: 0; height: 0; line-height: 0; }}
-        /* Ainda que o <p> acima colapse pra altura zero, o wrapper
-        stElementContainer que o envolve (gerado pelo Streamlit) pode
-        manter alguma caixa própria e ficar por cima do botão de tela
-        cheia no canto da foto — pointer-events: none garante que ele
-        nunca intercepta clique, não importa a altura residual. */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-foto-marker) > div[data-testid="stElementContainer"]:has(.mdf-foto-marker) {{
-            pointer-events: none;
-            height: 0 !important;
-            min-height: 0 !important;
-            overflow: hidden;
-        }}
         /* De propósito SEM overflow: hidden aqui — não precisa (object-fit:
         contain já garante que a imagem nunca ultrapassa a caixa) e, pior,
         causava um bug real: com overflow: hidden neste container, o botão
         nativo de tela cheia do Streamlit (que flutua ligeiramente pra fora
         do topo do cartão no hover) parava de receber cliques — o próprio
         cartão passava a interceptar o clique no lugar dele. */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-foto-marker) {{
+        [class*="st-key-mdf_foto_"] {{
             border-radius: 14px !important;
-            border: 1px solid #E4E7EB !important;
+            border: 1px solid {config.COR_BORDA} !important;
             background: #FFFFFF;
             box-shadow: 0 2px 10px rgba(23, 55, 94, 0.08);
             padding: 10px !important;
@@ -767,27 +667,25 @@ def aplicar_estilo() -> None:
         IGNORADO pelo algoritmo de flexbox (quando flex-basis não é "auto",
         é ele — não o height — que decide o tamanho no eixo principal).
         "flex: none" reseta isso em cada nível, pra "height: 100%" (e por
-        fim object-fit: contain no <img>) realmente valerem. O marcador em
-        si (span vazio dentro de um <p>) não precisa dessa regra — é ínfimo
-        o bastante pra não atrapalhar o layout mesmo sem altura forçada. */
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-foto-marker) > div[data-testid="stElementContainer"]:has(img),
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-foto-marker) [data-testid="stFullScreenFrame"],
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-foto-marker) [data-testid="stFullScreenFrame"] > div,
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-foto-marker) [data-testid="stImage"],
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-foto-marker) [data-testid="stImageContainer"] {{
+        fim object-fit: contain no <img>) realmente valerem. */
+        [class*="st-key-mdf_foto_"] > div[data-testid="stElementContainer"],
+        [class*="st-key-mdf_foto_"] [data-testid="stFullScreenFrame"],
+        [class*="st-key-mdf_foto_"] [data-testid="stFullScreenFrame"] > div,
+        [class*="st-key-mdf_foto_"] [data-testid="stImage"],
+        [class*="st-key-mdf_foto_"] [data-testid="stImageContainer"] {{
             height: 100% !important;
             width: 100% !important;
             flex: none !important;
         }}
-        div[data-testid="stVerticalBlock"]:has(> div > div > div > div > p > .mdf-foto-marker) img {{
+        [class*="st-key-mdf_foto_"] img {{
             width: 100% !important;
             height: 100% !important;
             object-fit: contain;
             border-radius: 8px;
         }}
-        .mdf-foto-vazio {{
-            font-size: 13px;
-            color: #6B7280;
+        [data-testid="stMarkdownContainer"] .mdf-foto-vazio {{
+            font-size: 14px;
+            color: {config.COR_TEXTO_SECUNDARIO};
             text-align: center;
             margin: 0;
             padding: 0 12px;
@@ -830,6 +728,12 @@ def aplicar_estilo() -> None:
     )
 
 
+def _slug(texto: str) -> str:
+    """Texto -> pedaço de key de container (só letras, números e _)."""
+    sem_acento = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "_", sem_acento.lower()).strip("_")
+
+
 def cabecalho(subtitulo: str) -> None:
     """Renderiza o cabeçalho institucional fixo no topo de todas as abas."""
     logo_b64 = _logo_base64()
@@ -869,7 +773,7 @@ def montar_subtitulo(loja: str, ciclo_selecionado: str, metadata: dict | None = 
     ciclo é igual ao próprio código da loja — nesse caso o nome do mês
     também é omitido (em vez de repetir a loja duas vezes)."""
     ultimo_trecho = ciclo_selecionado.split("/")[-1]
-    consultor = (metadata or {}).get("consultor")
+    consultor = formatar_consultor((metadata or {}).get("consultor"))
 
     partes = [f"Loja {loja}"]
     if ultimo_trecho != loja:
@@ -1028,18 +932,21 @@ def cartao_foto(
     solto) — é o que dá ao consultor o ícone de tela cheia do próprio
     Streamlit ao passar o mouse sobre a imagem, sem precisar reimplementar
     zoom na mão. A "moldura" (cantos arredondados, borda sutil, sombra) é
-    aplicada por FORA do widget via CSS, mirando o container pelo mesmo
-    padrão de marcador invisível + :has() já usado em .mdf-painel-marker/
-    .mdf-row-marker — não há como estilizar o container nativo do
-    st.container() de outra forma sem introduzir CSS solto fora do fluxo.
+    aplicada por FORA do widget via CSS, mirando o container pela key
+    (mdf_foto_*), o padrão do projeto para estilizar containers.
 
     Sem imagem, mostra `mensagem_vazio` (ex.: "Ainda não enviada", "Não foi
     possível processar o arquivo") DENTRO do mesmo tipo de moldura — nunca
     como texto solto fora dela.
     """
-    st.markdown(f'<p class="mdf-foto-titulo">{titulo}</p>', unsafe_allow_html=True)
-    with st.container():
-        st.markdown('<span class="mdf-foto-marker"></span>', unsafe_allow_html=True)
+    # gap=None: o espaço entre título e cartão é só a margem do título (8px).
+    with st.container(gap=None):
+        st.markdown(f'<p class="mdf-foto-titulo">{titulo}</p>', unsafe_allow_html=True)
+        _cartao_foto(titulo, imagem_bytes, mensagem_vazio)
+
+
+def _cartao_foto(titulo: str, imagem_bytes, mensagem_vazio) -> None:
+    with st.container(key=f"mdf_foto_{_slug(titulo)}"):
         if imagem_bytes:
             st.image(imagem_bytes, width="stretch")
         else:

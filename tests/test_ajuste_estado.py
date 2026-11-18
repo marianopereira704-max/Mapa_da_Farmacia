@@ -33,7 +33,8 @@ def test_quando_salvou_em_brasilia():
 def test_textos_da_faixa():
     assert texto_da_faixa(0, False, None).startswith("Ajuste ainda não salvo")
     assert texto_da_faixa(0, True, "2026-11-09T17:32:00+00:00") == "Tudo salvo. Último salvamento em 09/11 às 14:32."
-    assert texto_da_faixa(1, True, None) == "1 alteração não salva. Ajuste salvo."
+    assert texto_da_faixa(1, True, None) == "1 alteração não salva."
+    assert texto_da_faixa(0, True, None) == "Tudo salvo."
     assert texto_da_faixa(3, True, "2026-11-09T17:32:00+00:00") == "3 alterações não salvas. Último salvamento em 09/11 às 14:32."
 
 

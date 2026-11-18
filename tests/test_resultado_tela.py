@@ -30,7 +30,7 @@ def _planilha(caminho: Path, cabecalho: list, linhas: list) -> None:
 def dados(tmp_path) -> Path:
     pasta = tmp_path / "0000" / "2026-09"
     pasta.mkdir(parents=True)
-    shutil.copytree(RAIZ / "dados_demo" / "_Base", tmp_path / "_Base")
+    shutil.copytree(RAIZ / "tests" / "fixtures" / "_Base", tmp_path / "_Base")
     _planilha(pasta / "mapa_farmacia.xlsx", ["Módulo", "Posição", "EAN", "Produto", "Frentes"], [
         [1, 1, "7891000000011", "<b>Cresce</b> & Cia", 1],
         [1, 2, "7891000000028", "Novo na loja", 1],

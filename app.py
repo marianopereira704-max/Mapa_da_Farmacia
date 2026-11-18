@@ -31,7 +31,6 @@ import io
 import json
 import math
 import sys
-import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -245,17 +244,12 @@ def _carregar_preview_modelo(_storage, caminho_ciclo: str, variante: str, assina
     reenviar um arquivo que já está lá.
     """
     caminho = f"{caminho_ciclo}/modelo_{variante}.png"
-    print(f"[PREVIEW-TEMPO] INICIO ler_arquivo_bytes({caminho!r})", flush=True)  # >>> DIAGNOSTICO
-    _pv_t0 = time.perf_counter()  # >>> DIAGNOSTICO
     try:
         conteudo = _storage.ler_arquivo_bytes(caminho)
-        print(f"[PREVIEW-TEMPO] FIM ler_arquivo_bytes({caminho!r}): {time.perf_counter() - _pv_t0:.2f}s, {len(conteudo)/1024:.1f} KB", flush=True)  # >>> DIAGNOSTICO
         return conteudo, "image/png", None
-    except ArquivoNaoEncontradoError as e:
-        print(f"[PREVIEW-TEMPO] FIM ler_arquivo_bytes({caminho!r}): {time.perf_counter() - _pv_t0:.2f}s, nao encontrado: {e}", flush=True)  # >>> DIAGNOSTICO
+    except ArquivoNaoEncontradoError:
         return None, None, "Ainda não enviada"
-    except Exception as e:
-        print(f"[PREVIEW-TEMPO] FIM ler_arquivo_bytes({caminho!r}): {time.perf_counter() - _pv_t0:.2f}s, {type(e).__name__}: {e}", flush=True)  # >>> DIAGNOSTICO
+    except Exception:
         return None, None, "Não foi possível processar o arquivo"
 
 
@@ -515,7 +509,7 @@ def _atualizar_metadata_ciclo(
         pass
 
     if consultor:
-        metadata_atual["consultor"] = consultor
+        metadata_atual["consultor"] = lojas_api.formatar_consultor(consultor)
     # UTC com offset explícito (+00:00): o servidor do Streamlit Cloud roda
     # em UTC, e um horário "ingênuo" fica ambíguo pra quem lê depois (ex.:
     # relatório mensal, que converte pra horário de Brasília).
@@ -628,7 +622,7 @@ def _validar_mapa_farmacia_upload(conteudo: bytes) -> list[dict]:
     return df.attrs.get("colisoes_modulo_posicao", [])
 
 
-@st.dialog("⚠️ Possível erro na planilha do Mapa da Farmácia")
+@st.dialog("Possível erro na planilha do Mapa da Farmácia")
 def _dialog_colisoes_modulo_posicao(colisoes: list[dict]) -> None:
     """Pop-up didático mostrado depois de salvar um Mapa da Farmácia em
     que 2+ produtos disputam a mesma posição dentro do mesmo módulo — sinal
@@ -707,10 +701,9 @@ _ROTULOS_ARQUIVOS_UPLOAD = {
 }
 
 # CSS-in-JS aplicado ao componente React do campo Loja (streamlit-
-# searchbox), pra ficar visualmente IDÊNTICO ao campo Consultor ao lado
-# (st.text_input nativo — CSS dele em styles.py, marcador
-# .mdf-campo-consultor-marker). Usa as mesmas constantes de config.py dos
-# dois lados, de propósito, pra não haver deriva entre eles. Sem isso, o
+# searchbox), pra ficar visualmente IDÊNTICO ao campo Consultor ao lado,
+# que é um st.text_input nativo sem CSS próprio (o padrão de todos os
+# campos do app). As constantes vêm de config.py. Sem isso, o
 # searchbox vem com a aparência padrão do react-select: mais alto, cantos
 # menos arredondados, sem borda visível em repouso e borda vermelha
 # (cor "primária" padrão do Streamlit) quando focado/aberto — bem
@@ -753,9 +746,9 @@ _ESTILO_CAMPO_LOJA = {
 def pagina_upload() -> None:
     styles.cabecalho("Envio de arquivos")
 
-    st.markdown("#### Envio de arquivos por loja")
-    st.caption(
-        "Faça o Upload dos arquivos nos campos indicados."
+    st.markdown(
+        '<p class="mdf-lista-apoio">Escolha a loja e envie os arquivos nos campos indicados.</p>',
+        unsafe_allow_html=True,
     )
 
     # ---- Lista oficial de lojas (API do TI) ----
@@ -814,8 +807,7 @@ def pagina_upload() -> None:
             return [(f"{texto_busca}  (fora da lista oficial — usar mesmo assim)", texto_busca)]
         return [(_rotulo_loja(c), c) for c in codigos_filtrados]
 
-    with st.container(border=True):
-        st.markdown('<span class="mdf-painel-form-marker"></span>', unsafe_allow_html=True)
+    with st.container(border=True, key="mdf_form_upload"):
 
         # Pré-preenchimento vindo do botão "Upload" de uma loja (ver
         # _abrir_upload) — lido UMA VEZ aqui
@@ -931,10 +923,7 @@ def pagina_upload() -> None:
                 if upload_loja != st.session_state.get("_upload_ano_mes_contexto_loja"):
                     st.session_state["_upload_ano_mes_contexto"] = None
                     st.session_state["_upload_ano_mes_contexto_loja"] = None
-            st.markdown('<span class="mdf-campo-consultor-marker"></span>', unsafe_allow_html=True)
             upload_consultor = st.text_input("Consultor", key="upload_consultor")
-
-        st.markdown("&nbsp;", unsafe_allow_html=True)
 
         # Mês de destino: o que veio da tela de origem (barra de meses, cartão
         # de um mês) ou o atual. Se a loja já tem arquivos nesse mês, cada campo
@@ -984,13 +973,14 @@ def pagina_upload() -> None:
                 rotulo_arquivo = _ROTULOS_ARQUIVOS_UPLOAD[chave]
                 if arquivos_existentes_destino is not None:
                     rotulo_arquivo = (
-                        f"✅ {rotulo_arquivo}" if chave in arquivos_existentes_destino
-                        else f"⚠️ {rotulo_arquivo}"
+                        f":green[:material/check_circle:] {rotulo_arquivo}" if chave in arquivos_existentes_destino
+                        else f":orange[:material/error:] {rotulo_arquivo}"
                     )
                 arquivos_selecionados[chave] = st.file_uploader(
                     rotulo_arquivo,
                     type=extensoes_aceitas,
                     key=f"upload_arquivo_{chave}",
+                    help=f"Formatos aceitos: {', '.join(e.upper() for e in extensoes_aceitas)}.",
                 )
 
         # "_upload_reenviar": o pop-up do mês do Retrato (ver
@@ -1201,7 +1191,7 @@ def pagina_upload() -> None:
                             if chave == "retrato_vendas" else None
                         ),
                     )
-                    st.toast(f"{_ROTULOS_ARQUIVOS_UPLOAD[chave]} substituído.", icon="✅")
+                    st.toast(f"{_ROTULOS_ARQUIVOS_UPLOAD[chave]} substituído.", icon=":material/check_circle:")
 
                     if chave == "modelo":
                         try:
@@ -1253,7 +1243,7 @@ def pagina_upload() -> None:
                     if extensao == ".parquet":
                         caminho_destino = f"{config.BASE_NACIONAL_FOLDER_NAME}/{nome_base}.parquet"
                         storage.escrever_arquivo_bytes(caminho_destino, arquivo_base_nacional.getvalue())
-                        st.toast(f"Base nacional enviada: `{caminho_destino}`", icon="✅")
+                        st.toast(f"Base nacional enviada: `{caminho_destino}`", icon=":material/check_circle:")
                     else:
                         # Arquivo bruto (.xlsx/.xls) -- converte automaticamente
                         # antes de salvar, em vez de subir do jeito que veio (o
@@ -1273,7 +1263,7 @@ def pagina_upload() -> None:
                             f"({resumo.removidos_categoria:,} por categoria, "
                             f"{resumo.removidos_demanda:,} por demanda baixa)."
                             .replace(",", "."),
-                            icon="✅",
+                            icon=":material/check_circle:",
                         )
                 except dl.PlanilhaInvalidaError as e:
                     st.error(f"Não foi possível processar o arquivo: {e}")
@@ -1404,8 +1394,8 @@ def _linha_da_lista(
     """`mes` None (modo "Todos"): "Ir para análise" abre o pop-up de meses e o
     Upload vai para o mês atual. Com mês filtrado, os dois usam esse mês."""
     with st.container(key=f"mdf_linha_loja_{linha.codigo}"):
-        c_cod, c_razao, c_consultor, c_ultimo, c_analise, c_upload = st.columns(
-            [0.8, 2.4, 1.4, 1.1, 1.4, 1], vertical_alignment="center"
+        c_cod, c_razao, c_consultor, c_ultimo, c_acoes = st.columns(
+            [0.7, 2.4, 1.6, 0.9, 2.4], vertical_alignment="center"
         )
         ultimo = selecao_loja.mes_curto(linha.ultimo_mes) if linha.ultimo_mes else "—"
         for coluna, classe, valor in (
@@ -1419,19 +1409,23 @@ def _linha_da_lista(
             f'<span class="mdf-loja-ultimo-rotulo">Último</span>{html.escape(ultimo)}</p>',
             unsafe_allow_html=True,
         )
-        if linha.tem_arquivos and c_analise.button(
-            "Ir para análise", key=f"analise_loja_{linha.codigo}", width="stretch",
-            icon=":material/arrow_forward:", icon_position="right",
+        with c_acoes, st.container(
+            key=f"mdf_acoes_loja_{linha.codigo}", horizontal=True,
+            horizontal_alignment="right", vertical_alignment="center", gap="small",
         ):
-            ciclos = inventario_atual[linha.codigo]
-            if mes is None:
-                _dialog_selecionar_mes(
-                    linha.codigo, selecao_loja.rotulo_da_loja(linha.codigo, cadastro), ciclos, mes_de_hoje,
-                )
-            else:
-                _abrir_analise(linha.codigo, mes, ciclos[mes])
-        if c_upload.button("Upload", key=f"upload_loja_{linha.codigo}", width="stretch", icon=":material/upload:"):
-            _abrir_upload(linha.codigo, mes or mes_de_hoje)
+            if linha.tem_arquivos and st.button(
+                "Ir para análise", key=f"analise_loja_{linha.codigo}", width="content",
+                icon=":material/arrow_forward:", icon_position="right",
+            ):
+                ciclos = inventario_atual[linha.codigo]
+                if mes is None:
+                    _dialog_selecionar_mes(
+                        linha.codigo, selecao_loja.rotulo_da_loja(linha.codigo, cadastro), ciclos, mes_de_hoje,
+                    )
+                else:
+                    _abrir_analise(linha.codigo, mes, ciclos[mes])
+            if st.button("Upload", key=f"upload_loja_{linha.codigo}", width="content", icon=":material/upload:"):
+                _abrir_upload(linha.codigo, mes or mes_de_hoje)
 
 
 def _paginacao_lojas(pagina: selecao_loja.Pagina) -> None:
@@ -1672,8 +1666,6 @@ def _contexto_analise():
             st.switch_page(PAGINA_SELECIONAR_LOJA)
         return None
 
-    _pag_t0 = time.perf_counter()  # >>> DIAGNOSTICO
-    print(f"[PAGINA-TEMPO] INICIO pagina Analise, loja={loja!r} ciclo={ciclo_selecionado!r}", flush=True)  # >>> DIAGNOSTICO
     # Sem o inventário a análise continua abrindo: só faltam os controles do topo.
     mes_aberto = ciclo_selecionado.partition("/")[2]
     try:
@@ -1691,7 +1683,7 @@ def _contexto_analise():
     styles.cabecalho(subtitulo_cabecalho)
     if inventario_atual is not None:
         _barra_contexto_analise(inventario_atual, loja, mes_aberto)
-    consultor = (metadata_ciclo or {}).get("consultor") or ""
+    consultor = lojas_api.formatar_consultor((metadata_ciclo or {}).get("consultor")) or ""
 
     # ---- Carregamento de dados do ciclo selecionado — lógica interna
     # idêntica à de antes; erros aparecem dentro das sub-páginas que
@@ -1702,7 +1694,6 @@ def _contexto_analise():
     estoque_df = None
     erro_dados = None
 
-    _pag_t1 = time.perf_counter()  # >>> DIAGNOSTICO
     try:
         mapa_df, estoque_df = _carregar_dados_loja(storage, ciclo_selecionado, _assinatura_ciclo(ciclo_selecionado))
     except ArquivoObrigatorioAusenteError as e:
@@ -1719,9 +1710,7 @@ def _contexto_analise():
         )
     except dl.PlanilhaInvalidaError as e:
         erro_dados = f"Não foi possível interpretar uma das planilhas: {e}"
-    print(f"[PAGINA-TEMPO] carregar_dados_loja: {time.perf_counter() - _pag_t1:.2f}s | len(mapa_df)={len(mapa_df) if mapa_df is not None else None}", flush=True)  # >>> DIAGNOSTICO
 
-    _pag_t2 = time.perf_counter()  # >>> DIAGNOSTICO
     base_df = None
     if erro_dados is None:
         try:
@@ -1732,17 +1721,14 @@ def _contexto_analise():
                 f"`{config.BASE_NACIONAL_FOLDER_NAME}`. Sem ela, não é possível calcular "
                 f"a demanda de mercado dos produtos."
             )
-    print(f"[PAGINA-TEMPO] carregar_base_nacional: {time.perf_counter() - _pag_t2:.2f}s", flush=True)  # >>> DIAGNOSTICO
 
-    _pag_t3 = time.perf_counter()  # >>> DIAGNOSTICO
     if erro_dados is None:
         tabela_base = dl.montar_tabela_ajuste_mix(mapa_df, estoque_df, base_df)
-    print(f"[PAGINA-TEMPO] montar_tabela_ajuste_mix: {time.perf_counter() - _pag_t3:.2f}s | len(tabela_base)={len(tabela_base) if tabela_base is not None else None}", flush=True)  # >>> DIAGNOSTICO
 
     return (
         loja, ciclo_selecionado, metadata_ciclo, consultor,
         mapa_df, estoque_df, tabela_base, erro_dados,
-        subtitulo_cabecalho, _pag_t0,
+        subtitulo_cabecalho,
     )
 
 
@@ -1767,8 +1753,8 @@ def _barra_abas_analise(sub_pagina_ativa: str) -> None:
     mix / Sugestão de GC / Conferência) em cima do CSS que já existia pro
     st.segmented_control (ver modules/styles.py) — agora são 3 st.Page
     genuinamente separadas, então cada "aba" é um st.button() dentro do
-    seu próprio st.container() marcado (mesmo padrão marcador+:has() já
-    usado no resto do projeto, ex.: nav da sidebar), que chama
+    seu próprio st.container() com key (padrão do projeto para estilizar
+    containers, ex.: nav da sidebar), que chama
     st.switch_page() em vez de só trocar o valor de um widget. Clicar na
     aba já ativa não faz nada, mesmo comportamento do required=True do
     segmented_control antigo."""
@@ -1777,15 +1763,13 @@ def _barra_abas_analise(sub_pagina_ativa: str) -> None:
         ("Sugestão de GC", PAGINA_SUGESTAO_GC),
         ("Conferência", PAGINA_CONFERENCIA),
     ]
-    with st.container():
-        st.markdown('<span class="mdf-abas-analise-marker"></span>', unsafe_allow_html=True)
+    with st.container(key="mdf_abas_analise"):
         cols = st.columns(len(abas))
         for col, (rotulo, pagina_alvo) in zip(cols, abas):
             with col:
                 ativa = rotulo == sub_pagina_ativa
-                marcador = "mdf-aba-analise-ativa-marker" if ativa else "mdf-aba-analise-inativa-marker"
-                with st.container():
-                    st.markdown(f'<span class="{marcador}"></span>', unsafe_allow_html=True)
+                slug = pagina_alvo.url_path.replace("/", "_").replace("-", "_")
+                with st.container(key=f"mdf_aba_{'ativa' if ativa else 'inativa'}_{slug}"):
                     if st.button(rotulo, key=f"aba_analise_{pagina_alvo.url_path.replace('/', '_')}", width="stretch"):
                         if not ativa:
                             st.switch_page(pagina_alvo)
@@ -1849,7 +1833,7 @@ def pagina_ajuste_mix() -> None:
     (
         loja, ciclo_selecionado, metadata_ciclo, consultor,
         mapa_df, estoque_df, tabela_base, erro_dados,
-        subtitulo_cabecalho, _pag_t0,
+        subtitulo_cabecalho,
     ) = ctx
 
     _barra_abas_analise("Ajuste de mix")
@@ -1861,7 +1845,7 @@ def pagina_ajuste_mix() -> None:
         chave_salvo = f"{chave_estado}::salvo"
 
         if st.session_state.pop("_ajuste_acabou_de_salvar", False):
-            st.toast("Ajuste de mix salvo.", icon="✅")
+            st.toast("Ajuste de mix salvo.", icon=":material/check_circle:")
 
         if chave_estado not in st.session_state or chave_salvo not in st.session_state:
             # Inicializa o estado editável (1a vez que esta loja/ciclo é aberta
@@ -1914,7 +1898,7 @@ def pagina_ajuste_mix() -> None:
         produtos_nao_localizados = tabela_base[~tabela_base["ean_valido"]]
 
         if len(produtos_nao_localizados) > 0:
-            with st.expander(f"⚠️ {len(produtos_nao_localizados)} produto(s) com EAN não localizado — ver detalhes"):
+            with st.expander(f"{len(produtos_nao_localizados)} produto(s) com EAN não localizado — ver detalhes", icon=":material/warning:"):
                 st.caption(
                     "Estes produtos continuam na lista abaixo e podem ser preenchidos manualmente. "
                     "O EAN cadastrado na origem não pôde ser cruzado com a base de demanda/estoque."
@@ -1937,7 +1921,7 @@ def pagina_ajuste_mix() -> None:
                     "Descartar", key="ajuste_descartar", width="stretch",
                     on_click=_descartar_ajuste, args=(chave_estado,),
                 )
-            if c_salvar.button("💾 Salvar", type="primary", width="stretch", key="ajuste_salvar"):
+            if c_salvar.button("Salvar", type="primary", width="stretch", key="ajuste_salvar", icon=":material/save:"):
                 if qtd_preenchidos < config.QTD_MINIMA_AJUSTE_MIX:
                     st.session_state["_confirmar_salvar_poucos"] = True
                 else:
@@ -2005,30 +1989,26 @@ def pagina_ajuste_mix() -> None:
         )
         tabela_pagina_mix = _fatia_pagina(tabela_exibida, pagina_atual_mix, _TAMANHO_PAGINA_LISTA)
 
-        with st.container(border=True):
-            st.markdown('<span class="mdf-painel-marker"></span>', unsafe_allow_html=True)
-
+        with st.container(border=True, key="mdf_painel_mix"):
             if len(tabela_exibida) == 0:
                 st.caption("Nenhum produto encontrado para esta busca.")
 
-            _mix_t0 = time.perf_counter()  # >>> DIAGNOSTICO
-            print(f"[MIX-TEMPO] INICIO loop de renderizacao, len(tabela_exibida)={len(tabela_exibida)}, pagina={pagina_atual_mix}/{total_paginas_mix}, len(tabela_pagina)={len(tabela_pagina_mix)}", flush=True)  # >>> DIAGNOSTICO
-            for _, row in tabela_pagina_mix.iterrows():
+            for indice_linha, (_, row) in enumerate(tabela_pagina_mix.iterrows()):
                 chave_produto = row["chave_produto"]
                 valor_atual = quantidades_editadas.get(chave_produto, row["quantidade"])
                 eh_qtd_negativa = pd.notna(valor_atual) and valor_atual < 0
-                with st.container():
-                    st.markdown('<span class="mdf-row-marker"></span>', unsafe_allow_html=True)
-                    if eh_qtd_negativa:
-                        st.markdown('<span class="mdf-row-qtd-negativa-marker"></span>', unsafe_allow_html=True)
-                    c1, c2, c3 = st.columns([0.08, 0.66, 0.26])
+                with st.container(key=f"mdf_produto_{'neg_' if eh_qtd_negativa else ''}mix_{indice_linha}"):
+                    c1, c2, c3 = st.columns([0.08, 0.66, 0.26], vertical_alignment="center")
                     with c1:
                         posicao_label = row["posicao"] if pd.notna(row["posicao"]) else "–"
                         st.markdown(f'<div class="mdf-tag">{posicao_label}</div>', unsafe_allow_html=True)
                     with c2:
                         badge_html = styles.badge_status(row["status_atual"])
-                        st.markdown(f'<p class="mdf-produto-nome">{row["produto"]}</p>', unsafe_allow_html=True)
-                        st.markdown(f'<p class="mdf-produto-meta">{badge_html}</p>', unsafe_allow_html=True)
+                        st.markdown(
+                            f'<div class="mdf-produto-info"><p class="mdf-produto-nome">{row["produto"]}</p>'
+                            f'<p class="mdf-produto-meta">{badge_html}</p></div>',
+                            unsafe_allow_html=True,
+                        )
                     with c3:
                         # Piso normalmente é 0 (não existe "pedir quantidade
                         # negativa"). Mas se o estoque da planilha de origem já
@@ -2036,7 +2016,7 @@ def pagina_ajuste_mix() -> None:
                         # travar o widget (StreamlitValueBelowMinError) — o
                         # consultor consegue corrigir na hora clicando em "+".
                         piso = min(0, int(row["quantidade"])) if pd.notna(row["quantidade"]) else 0
-                        col_input, col_alerta = st.columns([0.85, 0.15])
+                        col_input, col_alerta = st.columns([0.85, 0.15], vertical_alignment="center")
                         with col_input:
                             nova_qtd = st.number_input(
                                 "Quantidade",
@@ -2048,12 +2028,10 @@ def pagina_ajuste_mix() -> None:
                             )
                         with col_alerta:
                             if eh_qtd_negativa:
-                                st.markdown('<span class="mdf-qtd-alerta-icone">⚠</span>', unsafe_allow_html=True)
+                                st.markdown(f'<span class="mdf-qtd-alerta-icone">{_SVG_ALERTA_CARD}</span>', unsafe_allow_html=True)
                         quantidades_editadas[chave_produto] = nova_qtd
-            print(f"[MIX-TEMPO] FIM loop de renderizacao: {time.perf_counter() - _mix_t0:.2f}s", flush=True)  # >>> DIAGNOSTICO
 
         _controles_paginacao(chave_pagina_mix, pagina_atual_mix, total_paginas_mix, len(tabela_exibida), sufixo_key="rodape")
-        print(f"[PAGINA-TEMPO] aba_mix completa (desde inicio da pagina): {time.perf_counter() - _pag_t0:.2f}s", flush=True)  # >>> DIAGNOSTICO
 
 
 def pagina_sugestao_gc() -> None:
@@ -2063,7 +2041,7 @@ def pagina_sugestao_gc() -> None:
     (
         loja, ciclo_selecionado, metadata_ciclo, consultor,
         mapa_df, estoque_df, tabela_base, erro_dados,
-        subtitulo_cabecalho, _pag_t0,
+        subtitulo_cabecalho,
     ) = ctx
 
     _barra_abas_analise("Sugestão de GC")
@@ -2071,11 +2049,7 @@ def pagina_sugestao_gc() -> None:
     if erro_dados:
         st.error(erro_dados)
     else:
-        _gc_t0 = time.perf_counter()  # >>> DIAGNOSTICO
         ajuste_salvo = dl.carregar_ajuste_mix_salvo(storage, ciclo_selecionado)
-        print(f"[GC-TEMPO] 1 carregar_ajuste_mix_salvo: {time.perf_counter() - _gc_t0:.2f}s", flush=True)  # >>> DIAGNOSTICO
-        _qtd_produtos_ajuste = len(ajuste_salvo["produtos"]) if ajuste_salvo else None  # >>> DIAGNOSTICO
-        print(f"[GC-TAMANHO] len(mapa_df)={len(mapa_df) if mapa_df is not None else None} | ajuste_salvo is None={ajuste_salvo is None} | len(ajuste_salvo['produtos'])={_qtd_produtos_ajuste}", flush=True)  # >>> DIAGNOSTICO
 
         if ajuste_salvo is None:
             st.info(
@@ -2084,7 +2058,7 @@ def pagina_sugestao_gc() -> None:
             )
         else:
             if st.session_state.pop("_ajuste_acabou_de_salvar", False):
-                st.toast("Ajuste de mix salvo.", icon="✅")
+                st.toast("Ajuste de mix salvo.", icon=":material/check_circle:")
             # Alterações feitas no Ajuste de mix e ainda não salvas: o PDF sai
             # com o último ajuste salvo, diferente do que a pessoa vê lá.
             chave_estado = f"ajuste_mix::{loja}::{ciclo_selecionado}"
@@ -2108,19 +2082,12 @@ def pagina_sugestao_gc() -> None:
                             # Poucos produtos: a confirmação fica no Ajuste de mix.
                             st.switch_page(PAGINA_AJUSTE_MIX)
 
-            _gc_t1 = time.perf_counter()  # >>> DIAGNOSTICO
             tabela_gc = dl.montar_tabela_sugestao_gc(mapa_df, ajuste_salvo)
-            print(f"[GC-TEMPO] 2 montar_tabela_sugestao_gc: {time.perf_counter() - _gc_t1:.2f}s", flush=True)  # >>> DIAGNOSTICO
-            print(f"[GC-TAMANHO] len(tabela_gc)={len(tabela_gc)}", flush=True)  # >>> DIAGNOSTICO
 
-            _gc_t2 = time.perf_counter()  # >>> DIAGNOSTICO
-            print(f"[GC-TAMANHO] ANTES de chamar _carregar_preview_modelo variante=tela ciclo={ciclo_selecionado!r}", flush=True)  # >>> DIAGNOSTICO
             imagem_modelo_gc, mime_modelo_gc, msg_modelo_gc = _carregar_preview_modelo(
                 storage, ciclo_selecionado, "tela", _assinatura_ciclo(ciclo_selecionado)
             )
-            print(f"[GC-TEMPO] 3 carregar_imagem_conferencia: {time.perf_counter() - _gc_t2:.2f}s", flush=True)  # >>> DIAGNOSTICO
 
-            _gc_t3 = time.perf_counter()  # >>> DIAGNOSTICO
             # Aviso "Modelo ainda não enviado" — decisão do produto:
             # aparece toda vez que o consultor ENTRA na Análise
             # deste ciclo (não a cada rerun causado por qualquer
@@ -2134,19 +2101,16 @@ def pagina_sugestao_gc() -> None:
                 if st.session_state.get("_gc_modelo_aviso_ciclo_visto") != ciclo_selecionado:
                     st.session_state["_gc_modelo_aviso_ciclo_visto"] = ciclo_selecionado
                     _dialog_modelo_ausente(loja, ciclo_selecionado.split("/", 1)[1])
-            print(f"[GC-TEMPO] 4 checagem modelo ausente: {time.perf_counter() - _gc_t3:.2f}s", flush=True)  # >>> DIAGNOSTICO
 
-            _gc_t4 = time.perf_counter()  # >>> DIAGNOSTICO
             produtos_nao_localizados_gc = tabela_gc[~tabela_gc["ean_valido"]]
             if len(produtos_nao_localizados_gc) > 0:
-                with st.expander(f"⚠️ {len(produtos_nao_localizados_gc)} produto(s) com EAN não localizado — ver detalhes"):
+                with st.expander(f"{len(produtos_nao_localizados_gc)} produto(s) com EAN não localizado — ver detalhes", icon=":material/warning:"):
                     st.caption(
                         "Estes produtos continuam na lista abaixo e podem ser preenchidos manualmente. "
                         "O EAN cadastrado na origem não pôde ser cruzado com a base de demanda/estoque."
                     )
                     for _, row in produtos_nao_localizados_gc.iterrows():
                         st.markdown(f"- **{row['produto']}** — módulo {row['modulo']}, posição {row['posicao']}, EAN cadastrado: `{row['ean_original']}`")
-            print(f"[GC-TEMPO] 5 expander EAN nao localizado: {time.perf_counter() - _gc_t4:.2f}s", flush=True)  # >>> DIAGNOSTICO
 
             c_busca_texto_gc, c_botao_pdf = st.columns([0.75, 0.25], gap="small")
             with c_busca_texto_gc:
@@ -2160,22 +2124,13 @@ def pagina_sugestao_gc() -> None:
                 # A tabela usada no PDF é sempre a lista completa do ajuste
                 # salvo (não a filtrada pela busca acima) — a busca é só uma
                 # ajuda de navegação em tela, não deve limitar o que é exportado.
-                _gc_t5 = time.perf_counter()  # >>> DIAGNOSTICO
-                try:  # >>> DIAGNOSTICO
-                    imagem_modelo_impressao, _, _ = _carregar_preview_modelo(
-                        storage, ciclo_selecionado, "impressao", _assinatura_ciclo(ciclo_selecionado)
-                    )
-                except BaseException as e:  # >>> DIAGNOSTICO
-                    print(f"[GC-EXCEPTION] impressao: tipo={type(e).__module__}.{type(e).__name__} msg={e!r}", flush=True)  # >>> DIAGNOSTICO
-                    raise  # >>> DIAGNOSTICO
-                try:  # >>> DIAGNOSTICO
-                    pdf_bytes = _gerar_pdf_gc_cache(tabela_gc, consultor, loja, subtitulo_cabecalho, imagem_modelo_impressao)
-                except BaseException as e:  # >>> DIAGNOSTICO
-                    print(f"[GC-EXCEPTION] gerar_pdf_gc_cache: tipo={type(e).__module__}.{type(e).__name__} msg={e!r}", flush=True)  # >>> DIAGNOSTICO
-                    raise  # >>> DIAGNOSTICO
-                print(f"[GC-TEMPO] 6 gerar_pdf_gc_cache: {time.perf_counter() - _gc_t5:.2f}s", flush=True)  # >>> DIAGNOSTICO
+                imagem_modelo_impressao, _, _ = _carregar_preview_modelo(
+                    storage, ciclo_selecionado, "impressao", _assinatura_ciclo(ciclo_selecionado)
+                )
+                pdf_bytes = _gerar_pdf_gc_cache(tabela_gc, consultor, loja, subtitulo_cabecalho, imagem_modelo_impressao)
                 st.download_button(
-                    "📄 Exportar PDF",
+                    "Exportar PDF",
+                    icon=":material/picture_as_pdf:",
                     data=pdf_bytes,
                     file_name=f"Ajuste_Mix_RMC_{loja}.pdf",
                     mime="application/pdf",
@@ -2183,13 +2138,11 @@ def pagina_sugestao_gc() -> None:
                     width="stretch",
                 )
 
-            _gc_t6 = time.perf_counter()  # >>> DIAGNOSTICO
             mask_busca_gc = tabela_gc.apply(
                 lambda row: styles.corresponde_busca(termo_busca_gc, row["produto"], row["ean_original"], row["posicao"]),
                 axis=1,
             )
             tabela_gc_exibida = tabela_gc[mask_busca_gc]
-            print(f"[GC-TEMPO] 7 filtro de busca (mask): {time.perf_counter() - _gc_t6:.2f}s", flush=True)  # >>> DIAGNOSTICO
 
             # ---- Paginação da lista (ver bloco "Paginação de listas
             # longas" no topo do arquivo) — a lista aqui só tem display
@@ -2207,32 +2160,29 @@ def pagina_sugestao_gc() -> None:
             )
             tabela_gc_pagina = _fatia_pagina(tabela_gc_exibida, pagina_atual_gc, _TAMANHO_PAGINA_LISTA)
 
-            _gc_t7 = time.perf_counter()  # >>> DIAGNOSTICO
-            with st.container(border=True):
-                st.markdown('<span class="mdf-painel-marker"></span>', unsafe_allow_html=True)
-
+            with st.container(border=True, key="mdf_painel_gc"):
                 if len(tabela_gc_exibida) == 0:
                     st.caption("Nenhum produto encontrado para esta busca.")
 
-                for _, row in tabela_gc_pagina.iterrows():
-                    with st.container():
-                        st.markdown('<span class="mdf-row-marker"></span>', unsafe_allow_html=True)
-                        c1, c2, c3 = st.columns([0.08, 0.66, 0.26])
+                for indice_linha, (_, row) in enumerate(tabela_gc_pagina.iterrows()):
+                    with st.container(key=f"mdf_produto_gc_{indice_linha}"):
+                        c1, c2, c3 = st.columns([0.08, 0.66, 0.26], vertical_alignment="center")
                         with c1:
                             posicao_label = row["posicao"] if pd.notna(row["posicao"]) else "–"
                             st.markdown(f'<div class="mdf-tag">{posicao_label}</div>', unsafe_allow_html=True)
                         with c2:
-                            st.markdown(f'<p class="mdf-produto-nome">{row["produto"]}</p>', unsafe_allow_html=True)
                             frentes_html = styles.badge_frentes(row["frentes"])
-                            st.markdown(f'<p class="mdf-produto-meta">{frentes_html}</p>', unsafe_allow_html=True)
+                            st.markdown(
+                                f'<div class="mdf-produto-info"><p class="mdf-produto-nome">{row["produto"]}</p>'
+                                f'<p class="mdf-produto-meta">{frentes_html}</p></div>',
+                                unsafe_allow_html=True,
+                            )
                         with c3:
                             st.markdown(
                                 f'<p class="mdf-produto-qtd-destaque">{int(row["quantidade"])}</p>',
                                 unsafe_allow_html=True,
                             )
             _controles_paginacao(chave_pagina_gc, pagina_atual_gc, total_paginas_gc, len(tabela_gc_exibida), sufixo_key="rodape")
-            print(f"[GC-TEMPO] 8 loop de renderizacao das linhas: {time.perf_counter() - _gc_t7:.2f}s | pagina={pagina_atual_gc}/{total_paginas_gc}", flush=True)  # >>> DIAGNOSTICO
-            print(f"[GC-TEMPO] TOTAL do bloco aba_gc: {time.perf_counter() - _gc_t0:.2f}s", flush=True)  # >>> DIAGNOSTICO
 
 
 def pagina_conferencia() -> None:
@@ -2242,13 +2192,11 @@ def pagina_conferencia() -> None:
     (
         loja, ciclo_selecionado, metadata_ciclo, consultor,
         mapa_df, estoque_df, tabela_base, erro_dados,
-        subtitulo_cabecalho, _pag_t0,
+        subtitulo_cabecalho,
     ) = ctx
 
     _barra_abas_analise("Conferência")
 
-    print(f"[PAGINA-TEMPO] aba_conf INICIO (desde inicio da pagina): {time.perf_counter() - _pag_t0:.2f}s", flush=True)  # >>> DIAGNOSTICO
-    _conf_t0 = time.perf_counter()  # >>> DIAGNOSTICO
     imagem_antes, mime_antes, msg_antes = _carregar_imagem_conferencia(
         storage, ciclo_selecionado, "foto_antes", _assinatura_ciclo(ciclo_selecionado)
     )
@@ -2258,7 +2206,6 @@ def pagina_conferencia() -> None:
     imagem_depois, mime_depois, msg_depois = _carregar_imagem_conferencia(
         storage, ciclo_selecionado, "foto_depois", _assinatura_ciclo(ciclo_selecionado)
     )
-    print(f"[PAGINA-TEMPO] aba_conf 3 imagens carregadas: {time.perf_counter() - _conf_t0:.2f}s", flush=True)  # >>> DIAGNOSTICO
 
     c_antes, c_modelo, c_depois = st.columns(3, gap="medium")
     with c_antes:
@@ -2391,17 +2338,15 @@ st.session_state["_grupo_pagina_anterior"] = _grupo_atual
 with st.sidebar:
     # Menu de páginas como 3 botões empilhados (não st.radio nativo, nem a
     # sidebar automática do st.navigation — por isso position="hidden"
-    # acima) — cada um envolto num st.container() com um marcador CSS que
-    # indica se é o grupo ATIVO (preenchido navy) ou INATIVO (neutro
-    # claro), seguindo o mesmo padrão de marcador+:has() já usado no resto
-    # do projeto (ver modules/styles.py). Clicar num item que já é o ativo
+    # acima) — cada um envolto num st.container() cuja key indica se é o
+    # grupo ATIVO (preenchido navy) ou INATIVO (neutro claro), o padrão do
+    # projeto para estilizar containers (ver modules/styles.py). Clicar num item que já é o ativo
     # não faz nada (evita st.switch_page à toa). "Análise" retoma a última
     # sub-página visitada (ver _pagina_analise_para_retomar).
     for grupo_item in _GRUPOS_SIDEBAR:
         grupo_ativo = grupo_item == _grupo_atual
-        marcador_nav = "mdf-navitem-ativo-marker" if grupo_ativo else "mdf-botao-discreto-marker"
-        with st.container():
-            st.markdown(f'<span class="{marcador_nav}"></span>', unsafe_allow_html=True)
+        slug_nav = _SLUGS_GRUPOS[grupo_item]
+        with st.container(key=f"mdf_nav_ativo_{slug_nav}" if grupo_ativo else f"mdf_discreto_nav_{slug_nav}"):
             if st.button(grupo_item, key=f"nav_{_SLUGS_GRUPOS[grupo_item]}", width="stretch"):
                 if not grupo_ativo:
                     if grupo_item == "Upload":

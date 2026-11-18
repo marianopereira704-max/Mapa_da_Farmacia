@@ -65,7 +65,7 @@ def _planilha(caminho: Path, cabecalho: list, linhas: list) -> None:
 def dados(tmp_path) -> Path:
     pasta = tmp_path / "0000" / "2026-09"
     pasta.mkdir(parents=True)
-    shutil.copytree(RAIZ / "dados_demo" / "_Base", tmp_path / "_Base")
+    shutil.copytree(RAIZ / "tests" / "fixtures" / "_Base", tmp_path / "_Base")
     _planilha(pasta / "mapa_farmacia.xlsx", ["Módulo", "Posição", "EAN", "Produto", "Frentes"], [
         [1, 1, COM_ESTOQUE, "Com estoque", 1],
         [1, 2, SUGERIDO_A, "Sugerido A", 1],
@@ -218,7 +218,7 @@ def test_ajuste_salvo_antes_desta_versao_aparece_sem_hora(abrir, dados):
     (dados / "0000" / "2026-09" / "ajuste_mix.json").write_text(
         json.dumps({"produtos": [{"ean_original": COM_ESTOQUE, "quantidade": 5}]}), encoding="utf-8"
     )
-    assert _faixa(abrir()).endswith("Tudo salvo. Ajuste salvo.</p>")
+    assert _faixa(abrir()).endswith("Tudo salvo.</p>")
 
 
 def test_sugestao_de_gc_avisa_alteracao_nao_salva(abrir):

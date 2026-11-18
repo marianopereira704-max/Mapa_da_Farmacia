@@ -5,3 +5,25 @@ base = "light"
 # Azul do projeto (config.COR_NAVY). Sem isso, os campos selecionados ficam com
 # a borda vermelha padrão do Streamlit.
 primaryColor = "#17375E"
+# Texto principal e fundo dos campos: os mesmos tokens de config.py
+# (COR_TEXTO e COR_FUNDO_CAMPO), para widget nativo e CSS próprio baterem.
+textColor = "#1F2937"
+secondaryBackgroundColor = "#F0F2F6"
+# Cores nomeadas do tema = pares de status da identidade visual (config.py).
+# Valem para st.success/info/warning/error, :green[...] em rótulos e ícones.
+greenColor = "#639922"
+greenTextColor = "#27500A"
+greenBackgroundColor = "#EAF3DE"
+orangeColor = "#B8741A"
+orangeTextColor = "#854F0B"
+orangeBackgroundColor = "#FAEEDA"
+yellowColor = "#B8741A"
+yellowTextColor = "#854F0B"
+yellowBackgroundColor = "#FAEEDA"
+blueColor = "#4A6E90"
+blueTextColor = "#123A63"
+blueBackgroundColor = "#DCE9F7"
+# Vermelho só para erro de verdade (o mesmo par já usado no Resultado da ação).
+redColor = "#9A342C"
+redTextColor = "#9A342C"
+redBackgroundColor = "#FBE3E1"

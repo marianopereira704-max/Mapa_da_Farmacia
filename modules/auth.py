@@ -56,13 +56,12 @@ def _obter_senha_configurada() -> str | None:
 def _renderizar_tela_login(senha_configurada: str) -> None:
     """Formulário de senha centralizado, reaproveitando o cabeçalho
     institucional (logo + título) e o mesmo estilo de cartão já usado
-    para o quadro de produtos (.mdf-painel-marker) — sem CSS novo."""
+    para o quadro de produtos (key mdf_painel_*) — sem CSS novo."""
     styles.cabecalho("Acesso restrito")
 
     _, col_meio, _ = st.columns([1, 1.2, 1])
     with col_meio:
-        with st.container(border=True):
-            st.markdown('<span class="mdf-painel-marker"></span>', unsafe_allow_html=True)
+        with st.container(border=True, key="mdf_painel_login"):
             with st.form("mdf_form_login"):
                 senha_digitada = st.text_input(
                     "Senha",
